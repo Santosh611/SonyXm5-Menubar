@@ -8,7 +8,14 @@ struct SonyBarApp: App {
         MenuBarExtra {
             MenuView(controller: controller)
         } label: {
-            Image(systemName: "headphones")
+            if let battery = controller.menuBarBattery {
+                HStack(spacing: 3) {
+                    Image(systemName: "headphones")
+                    Text("\(battery)%")
+                }
+            } else {
+                Image(systemName: "headphones")
+            }
         }
         .menuBarExtraStyle(.window)
     }
@@ -57,7 +64,25 @@ func runProbe() {
     RunLoop.main.run()
 }
 
-if CommandLine.arguments.contains("--probe") {
+/// `--test-battery-alerts`: run readings through the low-battery tracker and print what fires.
+func testBatteryAlerts() {
+    var tracker = LowBatteryTracker()
+    let readings: [(Int, Bool)] = [(25, false), (20, false), (19, false), (12, false), (10, false), (9, false),
+                                   (40, true), (18, false), (8, false), (14, false), (16, false), (10, false)]
+    for (level, charging) in readings {
+        let alert = tracker.update(level: level, charging: charging)
+        print("\(level)%\(charging ? " charging" : "")\t-> \(alert.map { "\($0)" } ?? "-")")
+    }
+}
+
+if CommandLine.arguments.contains("--test-battery-alerts") {
+    testBatteryAlerts()
+} else if CommandLine.arguments.contains("--test-notification") {
+    BatteryNotifier.post(CommandLine.arguments.contains("--critical") ? .critical : .low,
+                         battery: CommandLine.arguments.contains("--critical") ? 10 : 20, deviceName: "WH-1000XM5")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 10) { exit(0) }
+    RunLoop.main.run()
+} else if CommandLine.arguments.contains("--probe") {
     runProbe()
 } else {
     SonyBarApp.main()

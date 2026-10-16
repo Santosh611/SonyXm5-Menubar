@@ -26,6 +26,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     @Published var eqBands: [Double] = Array(repeating: 0, count: 5)
 
     private var link: HeadphoneLink?
+    private var lowBattery = LowBatteryTracker()
     private var ncAsmTemplate: [UInt8]?          // last NC/ASM reply, reused as the SET template
     private var ncAsmProbeIndex = 0
     private var ncAsmProbeTimer: Timer?
@@ -163,8 +164,7 @@ final class HeadphoneController: NSObject, ObservableObject {
         case Command.retBattery, Command.ntfyBattery:
             // [cmd, type=0x00, level, chargingStatus]
             guard p.count >= 4, p[1] == 0x00 else { return }
-            battery = Int(p[2])
-            isCharging = p[3] == 1
+            updateBattery(level: Int(p[2]), charging: p[3] == 1)
         case Command.retNcAsm, Command.ntfyNcAsm:
             // [cmd, type, changeStatus, totalEffect, ncAsmMode, ambientMode, level, …]
             guard p.count >= 7, Command.ncAsmTypes.contains(p[1]) else { return }
@@ -185,6 +185,22 @@ final class HeadphoneController: NSObject, ObservableObject {
         default:
             break
         }
+    }
+
+    func updateBattery(level: Int, charging: Bool) {
+        battery = level
+        isCharging = charging
+        if let alert = lowBattery.update(level: level, charging: charging) {
+            Log.debug("Low battery alert: \(alert) at \(level)%")
+            BatteryNotifier.post(alert, battery: level, deviceName: deviceName ?? "Headphones")
+        }
+    }
+
+    /// Battery to show beside the menu bar icon, only when it needs attention.
+    var menuBarBattery: Int? {
+        guard status == .connected, let battery, !isCharging,
+              battery <= LowBatteryTracker.menuBarThreshold else { return nil }
+        return battery
     }
 
     // MARK: - User actions
