@@ -22,6 +22,7 @@
 - **Battery**: exact percentage in the panel
 - **Low-battery warnings**: percentage appears next to the menu bar icon at 20% or below, with an alert at 20% and 10%
 - **Stays in sync**: press the NC/Ambient button on the headphones and the menu updates instantly
+- **Only there when you need it**: like AirPods, the menu bar icon appears when the headphones connect and disappears when they disconnect
 - **Reconnects automatically** when your headphones connect to the Mac
 - **Turn off headphones** from the Mac, plus **Launch at Login**
 - Native SwiftUI, no Dock icon, light and dark mode
