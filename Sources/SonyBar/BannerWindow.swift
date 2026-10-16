@@ -85,7 +85,7 @@ enum BannerWindow {
     }
 }
 
-private struct BannerView: View {
+struct BannerView: View {
     let title: String
     let message: String
     let critical: Bool

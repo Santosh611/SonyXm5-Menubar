@@ -3,9 +3,15 @@ import ServiceManagement
 
 struct MenuView: View {
     @ObservedObject var controller: HeadphoneController
-    @State private var showBands = false
-    @State private var showAmbient = false
+    @State private var showBands: Bool
+    @State private var showAmbient: Bool
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+
+    init(controller: HeadphoneController, showAmbient: Bool = false, showBands: Bool = false) {
+        self.controller = controller
+        _showAmbient = State(initialValue: showAmbient)
+        _showBands = State(initialValue: showBands)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -272,7 +278,7 @@ private struct BandSlider: View {
                 if !editing { onCommit() }
             }
             .controlSize(.small)
-            Text(String(format: "%+d", Int(value.rounded())))
+            Text(Int(value.rounded()) == 0 ? "0" : String(format: "%+d", Int(value.rounded())))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 26, alignment: .trailing)

@@ -42,6 +42,20 @@ final class HeadphoneController: NSObject, ObservableObject {
         connectIfPossible()
     }
 
+    /// Offline controller with fixed sample state, for README screenshots. Never touches Bluetooth.
+    init(demo: Void) {
+        super.init()
+        status = .connected
+        deviceName = "WH-1000XM5"
+        battery = 82
+        noiseMode = .ambient
+        ambientLevel = 14
+        voiceFocus = true
+        eqPreset = EqPreset.manual
+        clearBass = 3
+        eqBands = [2, 0, -1, 1, 3]
+    }
+
     // MARK: - Connection
 
     func connectIfPossible() {

@@ -75,7 +75,10 @@ func testBatteryAlerts() {
     }
 }
 
-if CommandLine.arguments.contains("--test-battery-alerts") {
+if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
+    let dir = CommandLine.arguments.indices.contains(i + 1) ? CommandLine.arguments[i + 1] : "docs/screenshots"
+    Screenshots.run(outputDir: dir)
+} else if CommandLine.arguments.contains("--test-battery-alerts") {
     testBatteryAlerts()
 } else if CommandLine.arguments.contains("--test-notification") {
     BatteryNotifier.post(CommandLine.arguments.contains("--critical") ? .critical : .low,
