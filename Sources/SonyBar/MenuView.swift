@@ -4,6 +4,7 @@ import ServiceManagement
 struct MenuView: View {
     @ObservedObject var controller: HeadphoneController
     @State private var showBands = false
+    @State private var showAmbient = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -92,24 +93,29 @@ struct MenuView: View {
     }
 
     private var ambientControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        Disclosure(isExpanded: $showAmbient) {
+            VStack(alignment: .leading, spacing: 6) {
+                Slider(value: $controller.ambientLevel, in: 1...20, step: 1) { editing in
+                    if !editing { controller.commitAmbientLevel() }
+                }
+                .controlSize(.small)
+                Toggle("Focus on voice", isOn: Binding(
+                    get: { controller.voiceFocus },
+                    set: { controller.setVoiceFocus($0) }))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+            .padding(.top, 6)
+        } label: {
             HStack {
-                Text("Ambient level").font(.callout)
+                Text("Ambient level")
                 Spacer()
-                Text("\(Int(controller.ambientLevel.rounded()))")
-                    .font(.callout.monospacedDigit())
+                Text("\(Int(controller.ambientLevel.rounded()))\(controller.voiceFocus ? " · Voice" : "")")
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            Slider(value: $controller.ambientLevel, in: 1...20, step: 1) { editing in
-                if !editing { controller.commitAmbientLevel() }
-            }
-            Toggle("Focus on voice", isOn: Binding(
-                get: { controller.voiceFocus },
-                set: { controller.setVoiceFocus($0) }))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.callout)
         }
+        .font(.callout)
     }
 
     private var equalizer: some View {
@@ -131,7 +137,7 @@ struct MenuView: View {
                 .fixedSize()
             }
 
-            DisclosureGroup("Adjust bands", isExpanded: $showBands) {
+            Disclosure(isExpanded: $showBands) {
                 VStack(spacing: 4) {
                     BandSlider(label: "Clear Bass", value: $controller.clearBass) {
                         controller.commitEqBands()
@@ -148,39 +154,75 @@ struct MenuView: View {
                     }
                 }
                 .padding(.top, 6)
+            } label: {
+                Text("Adjust bands")
             }
             .font(.callout)
         }
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle("Launch at login", isOn: $launchAtLogin)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.callout)
-                .onChange(of: launchAtLogin) { _, enabled in
-                    do {
-                        if enabled { try SMAppService.mainApp.register() }
-                        else { try SMAppService.mainApp.unregister() }
-                    } catch {
-                        launchAtLogin = SMAppService.mainApp.status == .enabled
-                    }
-                }
-            HStack {
-                if controller.status == .connected {
-                    Button("Turn Off Headphones") { controller.powerOff() }
-                }
-                Spacer()
-                Button("Quit") { NSApplication.shared.terminate(nil) }
+        HStack {
+            if controller.status == .connected {
+                Button("Turn Off Headphones") { controller.powerOff() }
+                    .buttonStyle(.borderless)
+                    .font(.callout)
             }
-            .buttonStyle(.borderless)
-            .font(.callout)
+            Spacer()
+            Menu {
+                Toggle("Launch at Login", isOn: $launchAtLogin)
+                Divider()
+                Button("Quit SonyBar") { NSApplication.shared.terminate(nil) }
+                    .keyboardShortcut("q")
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Settings")
+        }
+        .onChange(of: launchAtLogin) { _, enabled in
+            do {
+                if enabled { try SMAppService.mainApp.register() }
+                else { try SMAppService.mainApp.unregister() }
+            } catch {
+                launchAtLogin = SMAppService.mainApp.status == .enabled
+            }
         }
     }
 }
 
 // MARK: - Components
+
+/// Disclosure row where the whole header toggles, not just the chevron.
+private struct Disclosure<Content: View, Label: View>: View {
+    @Binding var isExpanded: Bool
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 10)
+                    label()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded { content() }
+        }
+    }
+}
 
 private struct SectionTitle: View {
     let text: String
