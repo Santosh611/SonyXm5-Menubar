@@ -24,6 +24,7 @@
 - **Stays in sync**: press the NC/Ambient button on the headphones and the menu updates instantly
 - **Only there when you need it**: like AirPods, the menu bar icon appears when the headphones connect and disappears when they disconnect
 - **Reconnects automatically** when your headphones connect to the Mac
+- **Switches Mac audio to the headphones** when they connect, even when macOS stays on the speakers (common with multipoint). Can be turned off in the ⚙︎ menu
 - **Turn off headphones** from the Mac, plus **Launch at Login**
 - Native SwiftUI, no Dock icon, light and dark mode
 
@@ -103,6 +104,8 @@ $BIN --probe --mode nc|ambient|off            # change noise mode
 $BIN --probe --level 12 --voice on            # ambient level / voice focus
 $BIN --probe --eq "bass boost"                # EQ preset
 $BIN --probe --bands 3,-2,0,4,-5,10           # Clear Bass + 5 bands (-10…10)
+$BIN --list-audio                             # audio outputs (* = current)
+$BIN --test-audio-switch                      # move output away and back to the headset
 $BIN --test-battery-alerts                    # low-battery alert logic
 $BIN --test-notification [--critical]         # show the alert banner
 $BIN --screenshots docs/screenshots           # regenerate README screenshots (demo data)

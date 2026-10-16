@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import IOBluetooth
 
 struct SonyBarApp: App {
     @StateObject private var controller = HeadphoneController()
@@ -82,6 +83,25 @@ func testBatteryAlerts() {
 if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
     let dir = CommandLine.arguments.indices.contains(i + 1) ? CommandLine.arguments[i + 1] : "docs/screenshots"
     Screenshots.run(outputDir: dir)
+} else if CommandLine.arguments.contains("--list-audio") {
+    let current = AudioOutput.defaultOutput
+    for device in AudioOutput.outputDevices() {
+        print("\(device.id == current ? "*" : " ") \(device.name)  [\(device.uid)]")
+    }
+} else if CommandLine.arguments.contains("--test-audio-switch") {
+    // Moves output to another device briefly, then lets the headset matcher switch back.
+    let paired = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
+    guard let headset = paired.first(where: { ($0.name ?? "").contains("1000XM") }),
+          let target = AudioOutput.device(bluetoothAddress: headset.addressString, name: headset.name),
+          let other = AudioOutput.outputDevices().first(where: { $0.id != target.id }) else {
+        print("Headset audio output not found"); exit(1)
+    }
+    func current() -> String { AudioOutput.outputDevices().first { $0.id == AudioOutput.defaultOutput }?.name ?? "?" }
+    print("matched headset output: \(target.name) [\(target.uid)]")
+    AudioOutput.setDefaultOutput(other.id)
+    print("moved to:    \(current())")
+    Thread.sleep(forTimeInterval: 1)
+    print("switch back: \(AudioOutput.setDefaultOutput(target.id) ? "ok" : "failed") -> \(current())")
 } else if CommandLine.arguments.contains("--test-battery-alerts") {
     testBatteryAlerts()
 } else if CommandLine.arguments.contains("--test-notification") {

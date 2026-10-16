@@ -32,6 +32,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     private var ncAsmProbeTimer: Timer?
     private var batteryTimer: Timer?
     private var reconnectTimer: Timer?
+    private var audioRouteTimer: Timer?
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotification: IOBluetoothUserNotification?
 
@@ -101,6 +102,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     @objc private func deviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         guard Self.findHeadphones()?.addressString == device.addressString else { return }
         Log.debug("\(device.name ?? "device") connected")
+        routeAudioToHeadphones(device)
         // Give the audio profiles a moment to settle before opening the control channel.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.connectIfPossible()
@@ -110,6 +112,28 @@ final class HeadphoneController: NSObject, ObservableObject {
     @objc private func deviceDisconnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         Log.debug("\(device.name ?? "device") disconnected")
         tearDown(status: .noHeadphones)
+    }
+
+    /// macOS doesn't always pick the headset as output when it reconnects (common with multipoint).
+    /// Wait for its audio device to appear, then make it the default output.
+    private func routeAudioToHeadphones(_ device: IOBluetoothDevice) {
+        guard AudioOutput.switchOnConnect else { return }
+        audioRouteTimer?.invalidate()
+        let address = device.addressString
+        let name = device.name
+        let deadline = Date().addingTimeInterval(15)
+        audioRouteTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
+            if let output = AudioOutput.device(bluetoothAddress: address, name: name) {
+                timer.invalidate()
+                if AudioOutput.defaultOutput != output.id {
+                    let ok = AudioOutput.setDefaultOutput(output.id)
+                    Log.debug("Switch audio output to \(output.name): \(ok ? "ok" : "failed")")
+                }
+            } else if Date() > deadline {
+                timer.invalidate()
+                Log.debug("\(name ?? "Headphones") audio output never appeared")
+            }
+        }
     }
 
     private func scheduleReconnect() {

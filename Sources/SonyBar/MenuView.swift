@@ -6,6 +6,7 @@ struct MenuView: View {
     @State private var showBands: Bool
     @State private var showAmbient: Bool
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @AppStorage(AudioOutput.switchOnConnectKey) private var switchAudioOnConnect = true
 
     init(controller: HeadphoneController, showAmbient: Bool = false, showBands: Bool = false) {
         self.controller = controller
@@ -176,6 +177,7 @@ struct MenuView: View {
             }
             Spacer()
             Menu {
+                Toggle("Switch Mac Audio on Connect", isOn: $switchAudioOnConnect)
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                 Divider()
                 Button("Quit SonyBar") { NSApplication.shared.terminate(nil) }
