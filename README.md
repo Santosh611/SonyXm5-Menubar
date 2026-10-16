@@ -44,7 +44,17 @@ Other Sony headsets that use the same "v2" protocol (WH-1000XM6, WF-1000XM5, Lin
 
 ## Install
 
-There are no prebuilt releases yet. Build it from source in about a minute:
+### Download
+
+1. Download **SonyBar-x.y.z.zip** from the [latest release](https://github.com/Santosh611/SonyXm5-Menubar/releases/latest) and unzip it.
+2. Drag **SonyBar.app** into **Applications**.
+3. SonyBar isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time. Either:
+   - open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**, or
+   - run `xattr -dr com.apple.quarantine /Applications/SonyBar.app` in Terminal.
+
+### Build from source
+
+Takes about a minute and avoids the Gatekeeper step:
 
 ```sh
 git clone https://github.com/Santosh611/SonyXm5-Menubar.git
@@ -79,6 +89,7 @@ The protocol was reverse-engineered by the [SonyHeadphonesClient](https://github
 ```sh
 ./build.sh                       # build/SonyBar.app
 ./build.sh --install             # also copy to /Applications
+./build.sh --release             # universal build zipped into dist/ for GitHub releases
 ```
 
 The binary has a few command-line modes for testing without the UI:
