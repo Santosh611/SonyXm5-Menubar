@@ -94,6 +94,8 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             transmitInFlight()
         } else {
             Log.debug("Giving up on \(inFlight?.hex ?? "")")
+            // Silence usually means the headset saw this seq as a repeat; try the other one next.
+            seq = 1 &- seq
             inFlight = nil
             pump()
         }
@@ -110,9 +112,10 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     private func handle(_ packet: MDR.Packet) {
-        // The headset's sequence number drives ours: next send reuses the last seq it sent.
-        seq = packet.seq
         if packet.type == MDR.DataType.ack.rawValue {
+            // Only the headset's ACK says which seq it expects next. Its own data packets
+            // carry its separate counter; copying that made it drop our commands as duplicates.
+            seq = packet.seq
             ackTimer?.invalidate()
             inFlight = nil
             pump()
