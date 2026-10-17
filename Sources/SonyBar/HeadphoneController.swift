@@ -1,6 +1,7 @@
 import Foundation
 import IOBluetooth
 import Combine
+import AppKit
 
 /// App state for the connected headset. Lives on the main thread.
 final class HeadphoneController: NSObject, ObservableObject {
@@ -243,7 +244,13 @@ final class HeadphoneController: NSObject, ObservableObject {
 
     // MARK: - User actions
 
+    static let switchSoundKey = "playSwitchSound"
+
     func setNoiseMode(_ mode: NoiseMode) {
+        // The headset only plays its own tone for the physical button, so confirm app switches here.
+        if mode != noiseMode, UserDefaults.standard.object(forKey: Self.switchSoundKey) as? Bool ?? true {
+            NSSound(named: "Pop")?.play()
+        }
         noiseMode = mode
         sendNcAsm()
     }

@@ -16,7 +16,7 @@
 
 ## Features
 
-- **Noise control**: Noise Cancelling, Off, or Ambient with one click
+- **Noise control**: Noise Cancelling, Off, or Ambient with one click, with a short confirmation sound (can be turned off in the ⚙︎ menu)
 - **Ambient level**: 1–20 slider plus *Focus on voice*
 - **Equalizer**: Sony's presets (Bright, Excited, Mellow, Relaxed, Vocal, Treble Boost, Bass Boost, Speech, Custom 1/2) and a Manual EQ with Clear Bass and five bands
 - **Battery**: exact percentage in the panel

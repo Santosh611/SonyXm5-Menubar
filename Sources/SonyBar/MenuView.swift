@@ -7,6 +7,7 @@ struct MenuView: View {
     @State private var showAmbient: Bool
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage(AudioOutput.switchOnConnectKey) private var switchAudioOnConnect = true
+    @AppStorage(HeadphoneController.switchSoundKey) private var playSwitchSound = true
 
     init(controller: HeadphoneController, showAmbient: Bool = false, showBands: Bool = false) {
         self.controller = controller
@@ -177,6 +178,7 @@ struct MenuView: View {
             }
             Spacer()
             Menu {
+                Toggle("Play Sound When Switching Modes", isOn: $playSwitchSound)
                 Toggle("Switch Mac Audio on Connect", isOn: $switchAudioOnConnect)
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                 Divider()
