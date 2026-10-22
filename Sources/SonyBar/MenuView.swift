@@ -74,7 +74,7 @@ struct MenuView: View {
             case .connecting:
                 ProgressView().controlSize(.small)
             case .failed(let reason):
-                Text(reason)
+                Text("\(reason). Retrying automatically. If the Sony app is open on another device, it may be holding the controls.")
             case .connected:
                 EmptyView()
             }

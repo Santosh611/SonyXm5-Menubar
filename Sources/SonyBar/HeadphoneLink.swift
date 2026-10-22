@@ -21,8 +21,12 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var inFlight: [UInt8]?
     private var retries = 0
     private var ackTimer: Timer?
+    private var openTimer: Timer?
 
     private static let ackTimeout: TimeInterval = 1.0
+    /// The headset sometimes accepts the open request and never answers (e.g. while another
+    /// device's Sony app holds the control channel). Give up so the controller can retry.
+    private static let openTimeout: TimeInterval = 10
     private static let maxRetries = 3
 
     init(device: IOBluetoothDevice) {
@@ -52,9 +56,16 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             throw LinkError(String(format: "Couldn't open control channel (0x%08X)", result))
         }
         channel = newChannel
+        openTimer = Timer.scheduledTimer(withTimeInterval: Self.openTimeout, repeats: false) { [weak self] _ in
+            guard let self, !self.isOpen else { return }
+            Log.debug("Control channel didn't open in \(Int(Self.openTimeout))s")
+            self.close()
+            self.onEvent?(.closed(reason: "Headphones didn't respond"))
+        }
     }
 
     func close() {
+        openTimer?.invalidate()
         ackTimer?.invalidate()
         queue.removeAll()
         inFlight = nil
@@ -128,6 +139,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     // MARK: - IOBluetoothRFCOMMChannelDelegate
 
     func rfcommChannelOpenComplete(_ rfcommChannel: IOBluetoothRFCOMMChannel!, status error: IOReturn) {
+        openTimer?.invalidate()
         if error == kIOReturnSuccess {
             onEvent?(.opened)
             pump()
@@ -144,6 +156,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!) {
+        openTimer?.invalidate()
         ackTimer?.invalidate()
         channel = nil
         inFlight = nil

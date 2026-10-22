@@ -33,6 +33,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     private var ncAsmProbeTimer: Timer?
     private var batteryTimer: Timer?
     private var reconnectTimer: Timer?
+    private var reconnectAttempts = 0
     private var audioRouteTimer: Timer?
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotification: IOBluetoothUserNotification?
@@ -41,6 +42,8 @@ final class HeadphoneController: NSObject, ObservableObject {
         super.init()
         connectNotification = IOBluetoothDevice.register(
             forConnectNotifications: self, selector: #selector(deviceConnected(_:device:)))
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(didWake(_:)), name: NSWorkspace.didWakeNotification, object: nil)
         connectIfPossible()
     }
 
@@ -103,10 +106,21 @@ final class HeadphoneController: NSObject, ObservableObject {
     @objc private func deviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         guard Self.findHeadphones()?.addressString == device.addressString else { return }
         Log.debug("\(device.name ?? "device") connected")
+        reconnectAttempts = 0
         routeAudioToHeadphones(device)
         // Give the audio profiles a moment to settle before opening the control channel.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.connectIfPossible()
+        }
+    }
+
+    /// A channel opened before sleep is often dead after wake; start over once Bluetooth is back.
+    @objc private func didWake(_ note: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.status != .connected else { return }
+            Log.debug("Woke from sleep, reconnecting")
+            self.reconnectAttempts = 0
+            self.reconnect()
         }
     }
 
@@ -137,9 +151,13 @@ final class HeadphoneController: NSObject, ObservableObject {
         }
     }
 
+    /// Keeps retrying while the headset stays connected: 5s, 10s, 20s, then every 30s.
     private func scheduleReconnect() {
         reconnectTimer?.invalidate()
-        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+        let delay = min(5 * pow(2, Double(reconnectAttempts)), 30)
+        reconnectAttempts += 1
+        Log.debug("Reconnecting in \(Int(delay))s")
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             self?.connectIfPossible()
         }
     }
@@ -164,6 +182,7 @@ final class HeadphoneController: NSObject, ObservableObject {
         switch event {
         case .opened:
             status = .connected
+            reconnectAttempts = 0
             if let device = link?.device {
                 disconnectNotification = device.register(
                     forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
@@ -304,6 +323,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     }
 
     func reconnect() {
+        reconnectTimer?.invalidate()
         tearDown(status: .connecting)
         connectIfPossible()
     }
