@@ -31,7 +31,9 @@ if [[ "${1:-}" == "--release" ]]; then
   bins=()
   for arch in arm64 x86_64; do
     swift build -c release --triple "$arch-apple-macosx14.0"
-    bins+=(".build/$arch-apple-macosx/release/SonyBar")
+    # Newer SwiftPM uses one bin path for every triple, so copy each binary out before the next build.
+    cp "$(swift build -c release --triple "$arch-apple-macosx14.0" --show-bin-path)/SonyBar" "build/SonyBar-$arch"
+    bins+=("build/SonyBar-$arch")
   done
   lipo -create "${bins[@]}" -output "$APP/Contents/MacOS/SonyBar"
 else
