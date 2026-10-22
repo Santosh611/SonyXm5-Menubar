@@ -6,6 +6,23 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Command Line Tools can ship an SDK whose SwiftUI macros (@State) it has no plugin for.
+# If the default SDK can't build SwiftUI, fall back to the newest installed SDK that can.
+if [[ -z "${SDKROOT:-}" ]]; then
+  probe=$(mktemp -d)
+  printf 'import SwiftUI\nstruct V: View { @State var x = 0; var body: some View { EmptyView() } }\n' > "$probe/v.swift"
+  if ! swiftc -typecheck "$probe/v.swift" 2>/dev/null; then
+    for sdk in $(ls -d "$(xcode-select -p)"/SDKs/MacOSX[0-9]*.*.sdk 2>/dev/null | sort -rV); do
+      if SDKROOT="$sdk" swiftc -typecheck "$probe/v.swift" 2>/dev/null; then
+        export SDKROOT="$sdk"
+        echo "Using $(basename "$sdk") (default SDK can't build SwiftUI with these tools)"
+        break
+      fi
+    done
+  fi
+  rm -rf "$probe"
+fi
+
 APP=build/SonyBar.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
