@@ -12,6 +12,8 @@ final class HeadphoneController: NSObject, ObservableObject {
         case connecting
         case connected
         case failed(String)
+        /// Another device holds the headset's only control channel (name if we can tell which).
+        case inUseElsewhere(String?)
     }
 
     @Published private(set) var status: Status = .noHeadphones
@@ -42,6 +44,8 @@ final class HeadphoneController: NSObject, ObservableObject {
     /// Device playback was taken from by an automatic switch, until the switch shows up in the list.
     private var autoSwitchedFrom: PairedDevice?
     private var macAudioAttempts = 0
+    /// Set when the controls were taken back because this Mac started playing, so playback follows too.
+    private var followMacOnOpen = false
 
     private let startedAt = Date()
     /// Set when the headset connects while SonyBar is running; shown once the battery is known.
@@ -55,6 +59,8 @@ final class HeadphoneController: NSObject, ObservableObject {
     private var batteryTimer: Timer?
     private var reconnectTimer: Timer?
     private var reconnectAttempts = 0
+    /// Resets the reconnect backoff once a channel has stayed up a while, so a flapping channel backs off.
+    private var stableTimer: Timer?
     private var audioRouteTimer: Timer?
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotification: IOBluetoothUserNotification?
@@ -175,6 +181,7 @@ final class HeadphoneController: NSObject, ObservableObject {
                 self.link?.send(Command.getNcAsm(type: self.ncAsmTemplate?[1] ?? Command.ncAsmTypes[0]))
                 return
             }
+            if case .inUseElsewhere = self.status { return }
             Log.debug("Woke from sleep, reconnecting")
             self.reconnectAttempts = 0
             self.reconnect()
@@ -224,6 +231,7 @@ final class HeadphoneController: NSObject, ObservableObject {
         link = nil
         batteryTimer?.invalidate()
         ncAsmProbeTimer?.invalidate()
+        stableTimer?.invalidate()
         disconnectNotification?.unregister()
         disconnectNotification = nil
         status = newStatus
@@ -245,7 +253,9 @@ final class HeadphoneController: NSObject, ObservableObject {
         case .opened:
             Log.debug("Connected to \(deviceName ?? "headphones")")
             status = .connected
-            reconnectAttempts = 0
+            stableTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+                self?.reconnectAttempts = 0
+            }
             if let device = link?.device {
                 disconnectNotification = device.register(
                     forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
@@ -266,7 +276,16 @@ final class HeadphoneController: NSObject, ObservableObject {
             }
         case .closed(let reason):
             Log.debug("Control channel lost: \(reason)")
-            let stillConnected = link?.device.isConnected() ?? false
+            let device = link?.device
+            let stillConnected = device?.isConnected() ?? false
+            // A working channel closed by the headset while another device is connected means that
+            // device took the controls. Retrying would just take them back, and both sides keep
+            // kicking each other off every few seconds.
+            let others = devices.filter { $0.connected && !isThisMac($0) }
+            if stillConnected, status == .connected, !others.isEmpty, let device {
+                yieldControls(to: others.count == 1 ? others[0].name : nil, device: device)
+                return
+            }
             tearDown(status: stillConnected ? .failed(reason) : .disconnected)
             if stillConnected { scheduleReconnect() }
         case .packet(let packet):
@@ -275,6 +294,18 @@ final class HeadphoneController: NSObject, ObservableObject {
             case MDR.DataType.mdrNo2.rawValue: parseTable2(packet.payload)
             default: break
             }
+        }
+    }
+
+    /// Leave the control channel to the other device. Only this Mac starting playback through the
+    /// headset (or Use on This Mac) takes it back.
+    private func yieldControls(to holder: String?, device: IOBluetoothDevice) {
+        Log.debug("Controls taken by \(holder ?? "another device"), waiting")
+        tearDown(status: .inUseElsewhere(holder))
+        guard let output = AudioOutput.device(bluetoothAddress: device.addressString, name: device.name) else { return }
+        macAudioDevice = output.id
+        stopObservingMacAudio = AudioOutput.observeRunning(output.id) { [weak self] running in
+            self?.macAudioChanged(running: running)
         }
     }
 
@@ -482,6 +513,11 @@ final class HeadphoneController: NSObject, ObservableObject {
         stopObservingMacAudio = AudioOutput.observeRunning(output.id) { [weak self] running in
             self?.macAudioChanged(running: running)
         }
+        // Reclaimed because the Mac was playing: no start event will come, so follow it now.
+        if followMacOnOpen {
+            followMacOnOpen = false
+            if AudioOutput.isRunning(output.id) { macAudioChanged(running: true) }
+        }
     }
 
     private func detachMacAudio() {
@@ -502,6 +538,13 @@ final class HeadphoneController: NSObject, ObservableObject {
     }
 
     private func autoSwitchToMac() {
+        if case .inUseElsewhere = status {
+            guard let id = macAudioDevice, AudioOutput.isRunning(id) else { return }
+            Log.debug("Mac started playing; taking the controls back")
+            followMacOnOpen = true
+            reconnect()
+            return
+        }
         guard Self.autoSwitchEnabled, status == .connected,
               let id = macAudioDevice, AudioOutput.isRunning(id),
               let current = devices.first(where: \.playing), !isThisMac(current),

@@ -69,6 +69,7 @@ struct MenuView: View {
         case .connecting: "Connecting…"
         case .noHeadphones, .disconnected: "Not connected"
         case .failed: "Connection problem"
+        case .inUseElsewhere(let holder): "In use on \(holder ?? "another device")"
         }
     }
 
@@ -78,6 +79,7 @@ struct MenuView: View {
             switch controller.status {
             case .noHeadphones:
                 Text("Connect your headphones in Bluetooth settings. Controls appear here automatically.")
+                Button("Try Again") { controller.reconnect() }
             case .disconnected:
                 Button("Connect") { controller.connectHeadphones() }
                     .buttonStyle(.borderedProminent)
@@ -89,12 +91,13 @@ struct MenuView: View {
             case .connecting:
                 ProgressView().controlSize(.small)
             case .failed(let reason):
-                Text("\(reason). Retrying automatically. If the Sony app is open on another device, it may be holding the controls.")
+                Text("\(reason). Retrying automatically.")
+                Button("Try Again") { controller.reconnect() }
+            case .inUseElsewhere(let holder):
+                Text("\(holder ?? "Another device") is using the headphone controls. They come back here when this Mac plays audio.")
+                Button("Use on This Mac") { controller.reconnect() }
             case .connected:
                 EmptyView()
-            }
-            if controller.status != .connecting && controller.status != .disconnected {
-                Button("Try Again") { controller.reconnect() }
             }
         }
         .font(.callout)
