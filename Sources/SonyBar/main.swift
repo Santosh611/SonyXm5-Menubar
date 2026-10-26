@@ -2,6 +2,22 @@ import SwiftUI
 import AppKit
 import IOBluetooth
 
+let showPanelNotification = Notification.Name("dev.santosh.sonybar.showPanel")
+
+/// MenuBarExtra has no API to open its panel, so click its status item button.
+func showPanel() {
+    let button = NSApp.windows
+        .filter { $0.className.contains("StatusBar") }
+        .compactMap { $0.contentView.flatMap(findStatusButton) }
+        .first
+    if let button { button.performClick(nil) } else { Log.debug("No menu bar icon to open (headphones not connected?)") }
+}
+
+private func findStatusButton(in view: NSView) -> NSStatusBarButton? {
+    if let button = view as? NSStatusBarButton { return button }
+    return view.subviews.lazy.compactMap(findStatusButton).first
+}
+
 struct SonyBarApp: App {
     @StateObject private var controller = HeadphoneController()
 
@@ -26,7 +42,7 @@ struct SonyBarApp: App {
     }
 }
 
-/// `--probe [--mode nc|ambient|off] [--level 1-20] [--voice on|off] [--eq <preset name>] [--bands cb,b1,…,b5]`:
+/// `--probe [--volume 0-30] [--mode nc|ambient|off] [--level 1-20] [--voice on|off] [--eq <preset name>] [--bands cb,b1,…,b5]`:
 /// connect, optionally change settings, print what the headset reports, and exit.
 func runProbe() {
     let controller = HeadphoneController()
@@ -53,6 +69,13 @@ func runProbe() {
             controller.eqBands = Array(bands[1...])
             controller.commitEqBands()
         }
+        // --send "a8 01;aa 01 0a": raw payloads for protocol exploration (watch with --debug)
+        for payload in value("--send")?.split(separator: ";") ?? [] {
+            controller.sendRaw(payload.split(separator: " ").compactMap { UInt8($0, radix: 16) })
+        }
+        if let level = value("--volume").flatMap(Double.init) {
+            controller.setVolume(level)
+        }
         if let voice = value("--voice") {
             controller.setVoiceFocus(voice == "on")
         }
@@ -63,6 +86,7 @@ func runProbe() {
         print("battery:    \(controller.battery.map { "\($0)%" } ?? "-")\(controller.isCharging ? " (charging)" : "")")
         print("noise mode: \(controller.noiseMode?.title ?? "-")  ambient level: \(Int(controller.ambientLevel))  voice focus: \(controller.voiceFocus)")
         let preset = EqPreset.all.first { $0.id == controller.eqPreset }?.name ?? controller.eqPreset.map { String(format: "0x%02X", $0) } ?? "-"
+        print("volume:     \(controller.volume.map { "\(Int($0))/\(Command.maxVolume)" } ?? "-")")
         print("eq preset:  \(preset)  clear bass: \(Int(controller.clearBass))  bands: \(controller.eqBands.map { Int($0) })")
         exit(0)
     }
@@ -111,6 +135,17 @@ if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
     RunLoop.main.run()
 } else if CommandLine.arguments.contains("--probe") {
     runProbe()
+} else if let bundleID = Bundle.main.bundleIdentifier,
+          NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+              .contains(where: { $0.processIdentifier != getpid() }) {
+    // The headset allows one control channel, so a second copy would sit on "Connecting…" forever.
+    // Opening the app again should still do something visible: ask the running copy to show its panel.
+    Log.debug("SonyBar is already running, showing its panel")
+    DistributedNotificationCenter.default().postNotificationName(
+        showPanelNotification, object: nil, userInfo: nil, deliverImmediately: true)
+    exit(0)
 } else {
+    DistributedNotificationCenter.default().addObserver(
+        forName: showPanelNotification, object: nil, queue: .main) { _ in showPanel() }
     SonyBarApp.main()
 }

@@ -20,6 +20,7 @@ struct MenuView: View {
             header
 
             if controller.status == .connected {
+                if let volume = controller.volume { volumeControl(volume) }
                 noiseControl
                 if controller.noiseMode == .ambient { ambientControls }
                 Divider()
@@ -84,6 +85,21 @@ struct MenuView: View {
         }
         .font(.callout)
         .foregroundStyle(.secondary)
+    }
+
+    private func volumeControl(_ volume: Double) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: volume == 0 ? "speaker.slash.fill" : "speaker.fill")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            Slider(value: Binding(get: { volume }, set: { controller.setVolume($0) }),
+                   in: 0...Double(Command.maxVolume), step: 1)
+                .controlSize(.small)
+                .accessibilityLabel("Volume")
+            Image(systemName: "speaker.wave.3.fill")
+                .foregroundStyle(.secondary)
+        }
+        .font(.callout)
     }
 
     private var noiseControl: some View {

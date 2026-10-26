@@ -26,6 +26,10 @@ final class HeadphoneController: NSObject, ObservableObject {
     @Published var clearBass: Double = 0         // -10…10
     @Published var eqBands: [Double] = Array(repeating: 0, count: 5)
 
+    /// Headset volume, 0…30. Nil until the headset reports it.
+    @Published private(set) var volume: Double?
+    private var sentVolume: Int?
+
     private var link: HeadphoneLink?
     private var lowBattery = LowBatteryTracker()
     private var ncAsmTemplate: [UInt8]?          // last NC/ASM reply, reused as the SET template
@@ -59,12 +63,15 @@ final class HeadphoneController: NSObject, ObservableObject {
         eqPreset = EqPreset.manual
         clearBass = 3
         eqBands = [2, 0, -1, 1, 3]
+        volume = 18
     }
 
     // MARK: - Connection
 
     func connectIfPossible() {
-        guard link == nil || link?.isOpen == false else { return }
+        // A link that exists is either open or still opening. Replacing an open in progress
+        // aborts it mid-handshake, which can leave the headset ignoring every later attempt.
+        guard link == nil else { return }
         guard let device = Self.findHeadphones() else {
             status = .noHeadphones
             deviceName = nil
@@ -77,10 +84,12 @@ final class HeadphoneController: NSObject, ObservableObject {
         link?.close()
         deviceName = device.name
         guard device.isConnected() else {
+            Log.debug("\(device.name ?? "Headphones") not connected, skipping control channel")
             status = .noHeadphones
             return
         }
-        status = .connecting
+        // Background retries keep showing the last problem instead of flipping back to a spinner.
+        if case .failed = status {} else { status = .connecting }
         let link = HeadphoneLink(device: device)
         link.onEvent = { [weak self] in self?.handle($0) }
         self.link = link
@@ -117,7 +126,14 @@ final class HeadphoneController: NSObject, ObservableObject {
     /// A channel opened before sleep is often dead after wake; start over once Bluetooth is back.
     @objc private func didWake(_ note: Notification) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            guard let self, self.status != .connected else { return }
+            guard let self else { return }
+            if self.status == .connected {
+                // It may only look connected. If this goes unanswered the link reports it closed.
+                Log.debug("Woke from sleep, checking control channel")
+                self.link?.send(Command.getBattery)
+                self.link?.send(Command.getNcAsm(type: self.ncAsmTemplate?[1] ?? Command.ncAsmTypes[0]))
+                return
+            }
             Log.debug("Woke from sleep, reconnecting")
             self.reconnectAttempts = 0
             self.reconnect()
@@ -174,6 +190,8 @@ final class HeadphoneController: NSObject, ObservableObject {
         noiseMode = nil
         battery = nil
         eqPreset = nil
+        volume = nil
+        sentVolume = nil
     }
 
     // MARK: - Link events
@@ -181,6 +199,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     private func handle(_ event: HeadphoneLink.Event) {
         switch event {
         case .opened:
+            Log.debug("Connected to \(deviceName ?? "headphones")")
             status = .connected
             reconnectAttempts = 0
             if let device = link?.device {
@@ -191,11 +210,13 @@ final class HeadphoneController: NSObject, ObservableObject {
             link?.send(Command.getBattery)
             link?.send(Command.getEq)
             ncAsmProbeIndex = 0
+            link?.send(Command.getVolume)
             probeNcAsm()
             batteryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
                 self?.link?.send(Command.getBattery)
             }
         case .closed(let reason):
+            Log.debug("Control channel lost: \(reason)")
             let stillConnected = link?.device.isConnected() ?? false
             tearDown(status: stillConnected ? .failed(reason) : .noHeadphones)
             if stillConnected { scheduleReconnect() }
@@ -240,6 +261,11 @@ final class HeadphoneController: NSObject, ObservableObject {
                 clearBass = Double(Int(p[4]) - 10)
                 eqBands = (5..<10).map { Double(Int(p[$0]) - 10) }
             }
+        case Command.retPlayParam, Command.ntfyPlayParam:
+            // [cmd, type=0x20, level]; type 0x01 is now-playing info, which we ignore
+            guard p.count >= 3, p[1] == Command.volumeType else { return }
+            volume = Double(p[2])
+            sentVolume = Int(p[2])
         default:
             break
         }
@@ -316,6 +342,20 @@ final class HeadphoneController: NSObject, ObservableObject {
         clearBass = 0
         eqBands = Array(repeating: 0, count: 5)
         commitEqBands()
+    }
+
+    /// Called while the slider moves; only sends when the level actually changes.
+    func setVolume(_ value: Double) {
+        volume = value
+        let level = Int(value.rounded())
+        guard level != sentVolume else { return }
+        sentVolume = level
+        link?.send(Command.setVolume(level))
+    }
+
+    /// For `--probe --send`: queue a raw Table-1 payload.
+    func sendRaw(_ payload: [UInt8]) {
+        link?.send(payload)
     }
 
     func powerOff() {

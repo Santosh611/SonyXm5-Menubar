@@ -20,10 +20,11 @@
 - **Ambient level**: 1–20 slider plus *Focus on voice*
 - **Equalizer**: Sony's presets (Bright, Excited, Mellow, Relaxed, Vocal, Treble Boost, Bass Boost, Speech, Custom 1/2) and a Manual EQ with Clear Bass and five bands
 - **Battery**: exact percentage in the panel
+- **Volume slider** that sets the headphones' own volume, so it works for audio from your phone too (multipoint), and follows changes made on the headset
 - **Low-battery warnings**: percentage appears next to the menu bar icon at 20% or below, with an alert at 20% and 10%
 - **Stays in sync**: press the NC/Ambient button on the headphones and the menu updates instantly
 - **Only there when you need it**: like AirPods, the menu bar icon appears when the headphones connect and disappears when they disconnect
-- **Reconnects automatically** when your headphones connect to the Mac
+- **Reconnects automatically** when your headphones connect to the Mac and after your Mac wakes from sleep. If the headphones don't answer, SonyBar keeps retrying in the background instead of spinning forever
 - **Switches Mac audio to the headphones** when they connect, even when macOS stays on the speakers (common with multipoint). Can be turned off in the ⚙︎ menu
 - **Turn off headphones** from the Mac, plus **Launch at Login**
 - Native SwiftUI, no Dock icon, light and dark mode
@@ -40,7 +41,7 @@
 
 - macOS 14 Sonoma or later
 - Sony WH-1000XM5 paired with your Mac (tested on firmware 2.5.1)
-- Xcode Command Line Tools to build (`xcode-select --install`). Full Xcode is not needed.
+- Xcode Command Line Tools to build (`xcode-select --install`). Full Xcode is not needed. If the newest SDK can't build SwiftUI with your tools (seen with the macOS 27 SDK), `build.sh` falls back to an older installed SDK automatically.
 
 Other Sony headsets that use the same "v2" protocol (WH-1000XM6, WF-1000XM5, LinkBuds S, …) may work but are untested. Reports are welcome.
 
@@ -69,6 +70,11 @@ The headphones icon appears in your menu bar. On first launch macOS may ask for 
 Enable **Launch at Login** from the ⚙︎ menu at the bottom of the panel.
 
 > SonyBar only opens the headphones' control channel. Audio keeps going through macOS as usual.
+
+## Troubleshooting
+
+**The panel says "Headphones didn't respond. Retrying automatically."**
+Bluetooth audio is fine, but the headphones aren't answering SonyBar's control channel. The XM5 lets only one device use that channel at a time, so this usually means the **Sony Sound Connect** app on your phone (or another computer) is holding it. SonyBar keeps retrying and connects by itself, within about 30 seconds, once the other device lets go. Closing the Sony app on the phone frees it straight away.
 
 ## How it works
 

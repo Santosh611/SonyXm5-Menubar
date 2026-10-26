@@ -41,6 +41,12 @@ else
   cp "$(swift build -c release --show-bin-path)/SonyBar" "$APP/Contents/MacOS/SonyBar"
 fi
 
+# SwiftPM's newer build system records the deployment target as the SDK version (14.0).
+# macOS then runs the app in compatibility mode: no Liquid Glass, and the menu panel
+# doesn't resize when a section expands. Stamp the SDK the binary was actually built with.
+sdk_version=$(xcrun --sdk "${SDKROOT:-macosx}" --show-sdk-version)
+vtool -set-build-version macos 14.0 "$sdk_version" -replace -output "$APP/Contents/MacOS/SonyBar" "$APP/Contents/MacOS/SonyBar"
+
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP"

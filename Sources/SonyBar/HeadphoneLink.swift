@@ -20,6 +20,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var queue: [[UInt8]] = []
     private var inFlight: [UInt8]?
     private var retries = 0
+    private var unansweredCommands = 0
     private var ackTimer: Timer?
     private var openTimer: Timer?
 
@@ -28,6 +29,9 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     /// device's Sony app holds the control channel). Give up so the controller can retry.
     private static let openTimeout: TimeInterval = 10
     private static let maxRetries = 3
+    /// A dropped command is normal now and then (seq mismatch), but a run of them means the
+    /// channel is dead, typically one opened before the Mac slept. Report it so we reconnect.
+    private static let maxUnansweredCommands = 2
 
     init(device: IOBluetoothDevice) {
         self.device = device
@@ -56,8 +60,17 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             throw LinkError(String(format: "Couldn't open control channel (0x%08X)", result))
         }
         channel = newChannel
+        Log.debug("Opening control channel \(channelID)")
         openTimer = Timer.scheduledTimer(withTimeInterval: Self.openTimeout, repeats: false) { [weak self] _ in
-            guard let self, !self.isOpen else { return }
+            guard let self else { return }
+            if self.isOpen {
+                // IOBluetooth sometimes opens the channel without calling rfcommChannelOpenComplete
+                // (seen after the headset reconnects). Waiting for it would leave us "connecting" forever.
+                Log.debug("Control channel open without completion callback")
+                self.onEvent?(.opened)
+                self.pump()
+                return
+            }
             Log.debug("Control channel didn't open in \(Int(Self.openTimeout))s")
             self.close()
             self.onEvent?(.closed(reason: "Headphones didn't respond"))
@@ -101,10 +114,17 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func ackTimedOut() {
         retries += 1
         if retries < Self.maxRetries {
-            Log.debug("ACK timeout, retry \(retries) for \(inFlight?.hex ?? "")")
+            Log.packet("ACK timeout, retry \(retries) for \(inFlight?.hex ?? "")")
             transmitInFlight()
         } else {
             Log.debug("Giving up on \(inFlight?.hex ?? "")")
+            unansweredCommands += 1
+            if unansweredCommands >= Self.maxUnansweredCommands {
+                Log.debug("Headphones stopped answering, closing control channel")
+                close()
+                onEvent?(.closed(reason: "Headphones stopped responding"))
+                return
+            }
             // Silence usually means the headset saw this seq as a repeat; try the other one next.
             seq = 1 &- seq
             inFlight = nil
@@ -114,7 +134,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     private func write(_ bytes: [UInt8]) {
         guard let channel else { return }
-        Log.debug(">> \(bytes.hex)")
+        Log.packet(">> \(bytes.hex)")
         var data = bytes
         let result = data.withUnsafeMutableBytes { buf in
             channel.writeSync(buf.baseAddress, length: UInt16(buf.count))
@@ -127,6 +147,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
             // Only the headset's ACK says which seq it expects next. Its own data packets
             // carry its separate counter; copying that made it drop our commands as duplicates.
             seq = packet.seq
+            unansweredCommands = 0
             ackTimer?.invalidate()
             inFlight = nil
             pump()
@@ -140,6 +161,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     func rfcommChannelOpenComplete(_ rfcommChannel: IOBluetoothRFCOMMChannel!, status error: IOReturn) {
         openTimer?.invalidate()
+        Log.debug(String(format: "Control channel open complete (0x%08X)", error))
         if error == kIOReturnSuccess {
             onEvent?(.opened)
             pump()
@@ -151,11 +173,12 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     func rfcommChannelData(_ rfcommChannel: IOBluetoothRFCOMMChannel!, data dataPointer: UnsafeMutableRawPointer!, length dataLength: Int) {
         let bytes = Array(UnsafeRawBufferPointer(start: dataPointer, count: dataLength))
-        Log.debug("<< \(bytes.hex)")
+        Log.packet("<< \(bytes.hex)")
         for packet in parser.feed(bytes) { handle(packet) }
     }
 
     func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!) {
+        Log.debug("Control channel closed")
         openTimer?.invalidate()
         ackTimer?.invalidate()
         channel = nil
@@ -179,11 +202,41 @@ struct LinkError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Connection events always go to ~/Library/Logs/SonyBar.log so a stall can be diagnosed after the fact.
+/// Raw packets only appear with --debug (or SONYBAR_DEBUG), on stderr.
 enum Log {
     static let enabled = ProcessInfo.processInfo.environment["SONYBAR_DEBUG"] != nil
         || CommandLine.arguments.contains("--debug")
 
+    private static let file: FileHandle? = {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/SonyBar.log")
+        // Keep one previous log once this one passes 1 MB.
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 1_000_000 {
+            let old = url.deletingPathExtension().appendingPathExtension("old.log")
+            try? FileManager.default.removeItem(at: old)
+            try? FileManager.default.moveItem(at: url, to: old)
+        }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        let handle = try? FileHandle(forWritingTo: url)
+        _ = try? handle?.seekToEnd()
+        return handle
+    }()
+
+    private static let timestamp: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
     static func debug(_ message: @autoclosure () -> String) {
+        let text = message()
+        file?.write("\(timestamp.string(from: Date())) [\(getpid())] \(text)\n".data(using: .utf8)!)
+        packet(text)
+    }
+
+    static func packet(_ message: @autoclosure () -> String) {
         guard enabled else { return }
         FileHandle.standardError.write(("[SonyBar] " + message() + "\n").data(using: .utf8)!)
     }

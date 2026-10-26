@@ -93,6 +93,12 @@ enum Command {
 
     static func getNcAsm(type: UInt8) -> [UInt8] { [0x66, type] }
 
+    /// Headset volume, 0…30. Applies to whatever is playing, including a phone over multipoint.
+    static let volumeType: UInt8 = 0x20
+    static let getVolume: [UInt8] = [0xA6, volumeType]
+    static func setVolume(_ level: Int) -> [UInt8] { [0xA8, volumeType, UInt8(clamping: level)] }
+    static let maxVolume = 30
+
     /// Preset change with no band values; the headset answers with the preset's bands.
     static func setEqPreset(_ preset: UInt8) -> [UInt8] { [0x58, 0x00, preset, 0x00] }
 
@@ -111,6 +117,8 @@ enum Command {
     static let retNcAsm: UInt8 = 0x67
     static let setNcAsm: UInt8 = 0x68
     static let ntfyNcAsm: UInt8 = 0x69
+    static let retPlayParam: UInt8 = 0xA7
+    static let ntfyPlayParam: UInt8 = 0xA9
 
     /// NC/ASM inquiry types to try, in order. XM5 uses 0x17; XM6-era firmware adds noise adaptation (0x19).
     static let ncAsmTypes: [UInt8] = [0x17, 0x19]
