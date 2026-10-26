@@ -68,7 +68,8 @@ enum Screenshots {
         let panelSize = scene.showPanel ? panelHost.fittingSize : .zero
 
         let bannerHost = NSHostingView(rootView: BannerView(
-            title: "WH-1000XM5 battery low", message: "20% remaining. Charge soon.", critical: false,
+            title: "WH-1000XM5 battery low", message: "20% remaining. Charge soon.",
+            badge: .init(symbol: "battery.25percent", color: .orange),
             onDismiss: {}, onHover: { _ in }))
         let bannerSize = scene.showBanner ? bannerHost.fittingSize : .zero
 

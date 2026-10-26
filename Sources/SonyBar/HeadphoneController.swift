@@ -30,6 +30,15 @@ final class HeadphoneController: NSObject, ObservableObject {
     @Published private(set) var volume: Double?
     private var sentVolume: Int?
 
+    /// Devices paired with the headset (multipoint), with which one has playback.
+    @Published private(set) var devices: [PairedDevice] = []
+    private var macAudioDevice: AudioDeviceID?
+    private var stopObservingMacAudio: (() -> Void)?
+    private var autoSwitchWork: DispatchWorkItem?
+    /// Device playback was taken from by an automatic switch, until the switch shows up in the list.
+    private var autoSwitchedFrom: PairedDevice?
+    private var macAudioAttempts = 0
+
     private var link: HeadphoneLink?
     private var lowBattery = LowBatteryTracker()
     private var ncAsmTemplate: [UInt8]?          // last NC/ASM reply, reused as the SET template
@@ -64,6 +73,10 @@ final class HeadphoneController: NSObject, ObservableObject {
         clearBass = 3
         eqBands = [2, 0, -1, 1, 3]
         volume = 18
+        devices = [
+            PairedDevice(address: "00", name: "MacBook Pro", connected: true, playing: true, kind: .computer),
+            PairedDevice(address: "01", name: "iPhone", connected: true, playing: false, kind: .phone),
+        ]
     }
 
     // MARK: - Connection
@@ -192,6 +205,9 @@ final class HeadphoneController: NSObject, ObservableObject {
         eqPreset = nil
         volume = nil
         sentVolume = nil
+        devices = []
+        autoSwitchedFrom = nil
+        detachMacAudio()
     }
 
     // MARK: - Link events
@@ -211,7 +227,10 @@ final class HeadphoneController: NSObject, ObservableObject {
             link?.send(Command.getEq)
             ncAsmProbeIndex = 0
             link?.send(Command.getVolume)
+            link?.send(Command2.getDevices, table: .mdrNo2)
             probeNcAsm()
+            macAudioAttempts = 0
+            attachMacAudio()
             batteryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
                 self?.link?.send(Command.getBattery)
             }
@@ -221,8 +240,11 @@ final class HeadphoneController: NSObject, ObservableObject {
             tearDown(status: stillConnected ? .failed(reason) : .noHeadphones)
             if stillConnected { scheduleReconnect() }
         case .packet(let packet):
-            guard packet.type == MDR.DataType.mdr.rawValue else { return }
-            parse(packet.payload)
+            switch packet.type {
+            case MDR.DataType.mdr.rawValue: parse(packet.payload)
+            case MDR.DataType.mdrNo2.rawValue: parseTable2(packet.payload)
+            default: break
+            }
         }
     }
 
@@ -266,6 +288,24 @@ final class HeadphoneController: NSObject, ObservableObject {
             guard p.count >= 3, p[1] == Command.volumeType else { return }
             volume = Double(p[2])
             sentVolume = Int(p[2])
+        default:
+            break
+        }
+    }
+
+    private func parseTable2(_ p: [UInt8]) {
+        guard p.count >= 2 else { return }
+        switch (p[0], p[1]) {
+        case (Command2.retPeriParam, Command2.deviceListType), (Command2.ntfyPeriParam, Command2.deviceListType):
+            guard let list = PairedDevice.parseList(p) else { return }
+            devices = list
+            Log.debug("Devices: " + list.map { "\($0.name)\($0.playing ? " (playing)" : $0.connected ? "" : " (off)")" }
+                .joined(separator: ", "))
+            confirmAutoSwitch()
+        case (Command2.ntfyPeriExtParam, Command2.sourceSwitchType), (Command2.ntfyPeriParam, Command2.sourceSwitchType):
+            // Switch result; 0 = success, 2 = refused during a call. Refresh the list either way.
+            if p.count >= 3, p[0] == Command2.ntfyPeriExtParam { Log.debug("Source switch result \(p[2])") }
+            link?.send(Command2.getDevices, table: .mdrNo2)
         default:
             break
         }
@@ -353,9 +393,103 @@ final class HeadphoneController: NSObject, ObservableObject {
         link?.send(Command.setVolume(level))
     }
 
+    // MARK: - Multipoint
+
+    static let autoSwitchKey = "autoSwitchToMac"
+    private static var autoSwitchEnabled: Bool {
+        UserDefaults.standard.object(forKey: autoSwitchKey) as? Bool ?? true
+    }
+
+    /// This Mac's Bluetooth address in the headset's format ("AA:BB:CC:DD:EE:FF").
+    static let macAddress: String? = IOBluetoothHostController.default()?.addressAsString()?
+        .uppercased().replacingOccurrences(of: "-", with: ":")
+
+    func isThisMac(_ device: PairedDevice) -> Bool {
+        device.address.uppercased() == Self.macAddress
+    }
+
+    /// Moves headset playback to another connected device.
+    func switchAudio(to device: PairedDevice) {
+        guard device.connected, !device.playing else { return }
+        Log.debug("Switching playback to \(device.name)")
+        link?.send(Command2.switchSource(to: device.address), table: .mdrNo2)
+        // Not every firmware notifies the new state, so ask again shortly after.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.link?.send(Command2.getDevices, table: .mdrNo2)
+        }
+    }
+
+    /// Watch this Mac's headset output so playback can follow the Mac, like AirPods.
+    /// The audio device can appear a few seconds after the control channel, so retry briefly.
+    private func attachMacAudio() {
+        guard status == .connected, let device = link?.device else { return }
+        guard let output = AudioOutput.device(bluetoothAddress: device.addressString, name: device.name) else {
+            macAudioAttempts += 1
+            if macAudioAttempts < 10 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.attachMacAudio() }
+            }
+            return
+        }
+        guard output.id != macAudioDevice else { return }
+        detachMacAudio()
+        macAudioDevice = output.id
+        stopObservingMacAudio = AudioOutput.observeRunning(output.id) { [weak self] running in
+            self?.macAudioChanged(running: running)
+        }
+    }
+
+    private func detachMacAudio() {
+        stopObservingMacAudio?()
+        stopObservingMacAudio = nil
+        macAudioDevice = nil
+        autoSwitchWork?.cancel()
+    }
+
+    /// Only a start of playback counts, and only if it lasts: a notification sound shouldn't
+    /// take the headset from the phone, and switching back by hand isn't undone while audio keeps going.
+    private func macAudioChanged(running: Bool) {
+        autoSwitchWork?.cancel()
+        guard running else { return }
+        let work = DispatchWorkItem { [weak self] in self?.autoSwitchToMac() }
+        autoSwitchWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
+    }
+
+    private func autoSwitchToMac() {
+        guard Self.autoSwitchEnabled, status == .connected,
+              let id = macAudioDevice, AudioOutput.isRunning(id),
+              let current = devices.first(where: \.playing), !isThisMac(current),
+              let mac = devices.first(where: isThisMac), mac.connected else { return }
+        Log.debug("Mac started playing; taking playback from \(current.name)")
+        autoSwitchedFrom = current
+        switchAudio(to: mac)
+    }
+
+    /// Once the list shows the Mac playing after an automatic switch, offer the way back.
+    private func confirmAutoSwitch() {
+        guard let previous = autoSwitchedFrom,
+              devices.first(where: \.playing).map(isThisMac) == true else { return }
+        autoSwitchedFrom = nil
+        BannerWindow.show(
+            title: "\(deviceName ?? "Headphones") moved to this Mac",
+            body: "Playback was on \(previous.name).",
+            symbol: "laptopcomputer",
+            action: .init(title: "Back to \(Self.shortName(previous.name))") { [weak self] in
+                guard let self, let device = self.devices.first(where: { $0.address == previous.address }) else { return }
+                self.switchAudio(to: device)
+            })
+    }
+
+    /// "Santosh’s iPhone" -> "iPhone", to keep the banner button short.
+    private static func shortName(_ name: String) -> String {
+        let parts = name.split(whereSeparator: { $0 == "’" || $0 == "'" })
+        guard parts.count == 2, parts[1].hasPrefix("s ") else { return name }
+        return String(parts[1].dropFirst(2))
+    }
+
     /// For `--probe --send`: queue a raw Table-1 payload.
-    func sendRaw(_ payload: [UInt8]) {
-        link?.send(payload)
+    func sendRaw(_ payload: [UInt8], table: MDR.DataType = .mdr) {
+        link?.send(payload, table: table)
     }
 
     func powerOff() {

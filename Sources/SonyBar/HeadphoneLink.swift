@@ -17,8 +17,8 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var channel: IOBluetoothRFCOMMChannel?
     private var parser = MDR.Parser()
     private var seq: UInt8 = 0
-    private var queue: [[UInt8]] = []
-    private var inFlight: [UInt8]?
+    private var queue: [(MDR.DataType, [UInt8])] = []
+    private var inFlight: (MDR.DataType, [UInt8])?
     private var retries = 0
     private var unansweredCommands = 0
     private var ackTimer: Timer?
@@ -87,9 +87,9 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
         channel = nil
     }
 
-    /// Queue a Table-1 command payload.
-    func send(_ payload: [UInt8]) {
-        queue.append(payload)
+    /// Queue a command payload; Table 1 unless `table` says otherwise.
+    func send(_ payload: [UInt8], table: MDR.DataType = .mdr) {
+        queue.append((table, payload))
         pump()
     }
 
@@ -103,8 +103,8 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     private func transmitInFlight() {
-        guard let payload = inFlight else { return }
-        write(MDR.pack(type: .mdr, seq: seq, payload: payload))
+        guard let (table, payload) = inFlight else { return }
+        write(MDR.pack(type: table, seq: seq, payload: payload))
         ackTimer?.invalidate()
         ackTimer = Timer.scheduledTimer(withTimeInterval: Self.ackTimeout, repeats: false) { [weak self] _ in
             self?.ackTimedOut()
@@ -114,10 +114,10 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func ackTimedOut() {
         retries += 1
         if retries < Self.maxRetries {
-            Log.packet("ACK timeout, retry \(retries) for \(inFlight?.hex ?? "")")
+            Log.packet("ACK timeout, retry \(retries) for \(inFlight?.1.hex ?? "")")
             transmitInFlight()
         } else {
-            Log.debug("Giving up on \(inFlight?.hex ?? "")")
+            Log.debug("Giving up on \(inFlight?.1.hex ?? "")")
             unansweredCommands += 1
             if unansweredCommands >= Self.maxUnansweredCommands {
                 Log.debug("Headphones stopped answering, closing control channel")

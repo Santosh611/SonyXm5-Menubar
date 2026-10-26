@@ -124,6 +124,68 @@ enum Command {
     static let ncAsmTypes: [UInt8] = [0x17, 0x19]
 }
 
+/// Table-2 payloads: the headset's paired-device list and multipoint source switching.
+enum Command2 {
+    static let deviceListType: UInt8 = 0x02     // pairing device management, with class of device
+    static let sourceSwitchType: UInt8 = 0x01
+    static let getDevices: [UInt8] = [0x36, deviceListType]
+    /// Moves playback to the connected device with this address ("AA:BB:CC:DD:EE:FF").
+    static func switchSource(to address: String) -> [UInt8] { [0x3C, sourceSwitchType] + Array(address.utf8.prefix(17)) }
+
+    static let retPeriParam: UInt8 = 0x37
+    static let ntfyPeriParam: UInt8 = 0x39
+    static let ntfyPeriExtParam: UInt8 = 0x3D
+}
+
+/// A device paired with the headset, as the headset reports it.
+struct PairedDevice: Identifiable, Equatable {
+    enum Kind { case computer, phone, other }
+
+    let address: String
+    let name: String
+    let connected: Bool
+    let playing: Bool
+    let kind: Kind
+    var id: String { address }
+
+    var symbol: String {
+        switch kind {
+        case .computer: "laptopcomputer"
+        case .phone: "iphone"
+        case .other: "dot.radiowaves.left.and.right"
+        }
+    }
+
+    /// `[cmd, type=0x02, count, {address(17 ASCII), status, classOfDevice(3), nameLength, name}…, playbackStatus]`.
+    /// A connected device's status is its slot number; the trailing byte names the slot that has playback.
+    static func parseList(_ p: [UInt8]) -> [PairedDevice]? {
+        guard p.count >= 3 else { return nil }
+        var i = 3
+        var entries: [(address: String, status: UInt8, cod: Int, name: String)] = []
+        for _ in 0..<Int(p[2]) {
+            guard i + 22 <= p.count else { return nil }
+            let address = String(decoding: p[i..<i + 17], as: UTF8.self)
+            let status = p[i + 17]
+            let cod = Int(p[i + 18]) << 16 | Int(p[i + 19]) << 8 | Int(p[i + 20])
+            let length = Int(p[i + 21])
+            i += 22
+            guard i + length <= p.count else { return nil }
+            entries.append((address, status, cod, String(decoding: p[i..<i + length], as: UTF8.self)))
+            i += length
+        }
+        let playback = i < p.count ? p[i] : 0
+        return entries.map { e in
+            let kind: Kind = switch (e.cod >> 8) & 0x1F {   // Bluetooth major device class
+            case 1: .computer
+            case 2: .phone
+            default: .other
+            }
+            return PairedDevice(address: e.address, name: e.name, connected: e.status != 0,
+                                playing: e.status != 0 && e.status == playback, kind: kind)
+        }
+    }
+}
+
 enum NoiseMode: String, CaseIterable, Identifiable {
     case noiseCancelling, off, ambient
     var id: String { rawValue }

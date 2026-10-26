@@ -42,7 +42,7 @@ struct SonyBarApp: App {
     }
 }
 
-/// `--probe [--volume 0-30] [--mode nc|ambient|off] [--level 1-20] [--voice on|off] [--eq <preset name>] [--bands cb,b1,…,b5]`:
+/// `--probe [--play-on <device>] [--volume 0-30] [--mode nc|ambient|off] [--level 1-20] [--voice on|off] [--eq <preset name>] [--bands cb,b1,…,b5]`:
 /// connect, optionally change settings, print what the headset reports, and exit.
 func runProbe() {
     let controller = HeadphoneController()
@@ -69,12 +69,19 @@ func runProbe() {
             controller.eqBands = Array(bands[1...])
             controller.commitEqBands()
         }
-        // --send "a8 01;aa 01 0a": raw payloads for protocol exploration (watch with --debug)
-        for payload in value("--send")?.split(separator: ";") ?? [] {
-            controller.sendRaw(payload.split(separator: " ").compactMap { UInt8($0, radix: 16) })
+        // --send "a6 20;t2:36 02": raw payloads for protocol exploration (watch with --debug); t2: = Table 2
+        for command in value("--send")?.split(separator: ";") ?? [] {
+            let table: MDR.DataType = command.hasPrefix("t2:") ? .mdrNo2 : .mdr
+            let bytes = command.split(separator: ":").last ?? ""
+            controller.sendRaw(bytes.split(separator: " ").compactMap { UInt8($0, radix: 16) }, table: table)
         }
         if let level = value("--volume").flatMap(Double.init) {
             controller.setVolume(level)
+        }
+        // --play-on <name>: move playback to the connected device whose name contains this
+        if let name = value("--play-on"),
+           let device = controller.devices.first(where: { $0.name.localizedCaseInsensitiveContains(name) }) {
+            controller.switchAudio(to: device)
         }
         if let voice = value("--voice") {
             controller.setVoiceFocus(voice == "on")
@@ -87,6 +94,10 @@ func runProbe() {
         print("noise mode: \(controller.noiseMode?.title ?? "-")  ambient level: \(Int(controller.ambientLevel))  voice focus: \(controller.voiceFocus)")
         let preset = EqPreset.all.first { $0.id == controller.eqPreset }?.name ?? controller.eqPreset.map { String(format: "0x%02X", $0) } ?? "-"
         print("volume:     \(controller.volume.map { "\(Int($0))/\(Command.maxVolume)" } ?? "-")")
+        for device in controller.devices {
+            print("device:     \(device.name) [\(device.address)]\(controller.isThisMac(device) ? " (this Mac)" : "")"
+                  + (device.playing ? " playing" : device.connected ? " connected" : " not connected"))
+        }
         print("eq preset:  \(preset)  clear bass: \(Int(controller.clearBass))  bands: \(controller.eqBands.map { Int($0) })")
         exit(0)
     }

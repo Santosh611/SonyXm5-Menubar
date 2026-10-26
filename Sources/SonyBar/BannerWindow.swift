@@ -5,6 +5,11 @@ import SwiftUI
 /// Needs no permissions. Dismisses after a few seconds (paused while hovered),
 /// via the hover close button, or when clicked.
 enum BannerWindow {
+    struct Action {
+        let title: String
+        let perform: () -> Void
+    }
+
     private static var panel: NSPanel?
     private static var dismissWork: DispatchWorkItem?
 
@@ -14,10 +19,27 @@ enum BannerWindow {
     private static let resumeAfterHover: TimeInterval = 4
 
     static func show(title: String, body: String, critical: Bool) {
+        show(title: title, body: body,
+             badge: .init(symbol: critical ? "battery.0percent" : "battery.25percent", color: critical ? .red : .orange),
+             sound: critical ? "Funk" : "Tink", action: nil)
+    }
+
+    /// Silent banner with a device badge and an optional button, e.g. after an automatic source switch.
+    static func show(title: String, body: String, symbol: String, action: Action?) {
+        show(title: title, body: body, badge: .init(symbol: symbol, color: .accentColor), sound: nil, action: action)
+    }
+
+    private static func show(title: String, body: String, badge: BannerView.Badge, sound: String?, action: Action?) {
         dismiss(animated: false)
 
         let hosting = NSHostingView(rootView: BannerView(
-            title: title, message: body, critical: critical,
+            title: title, message: body, badge: badge,
+            action: action.map { action in
+                BannerWindow.Action(title: action.title) {
+                    dismiss(animated: true)
+                    action.perform()
+                }
+            },
             onDismiss: { dismiss(animated: true) },
             onHover: { hovering in
                 if hovering { cancelAutoDismiss() } else { scheduleAutoDismiss(after: resumeAfterHover) }
@@ -52,7 +74,7 @@ enum BannerWindow {
         }
         self.panel = panel
 
-        NSSound(named: critical ? "Funk" : "Tink")?.play()
+        if let sound { NSSound(named: sound)?.play() }
         scheduleAutoDismiss(after: visibleFor)
     }
 
@@ -86,9 +108,15 @@ enum BannerWindow {
 }
 
 struct BannerView: View {
+    struct Badge {
+        let symbol: String
+        let color: Color
+    }
+
     let title: String
     let message: String
-    let critical: Bool
+    let badge: Badge
+    var action: BannerWindow.Action?
     let onDismiss: () -> Void
     let onHover: (Bool) -> Void
 
@@ -135,6 +163,11 @@ struct BannerView: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let action {
+                Button(action.title, action: action.perform)
+                    .controlSize(.small)
+                    .fixedSize()
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -156,9 +189,9 @@ struct BannerView: View {
                 .frame(width: 38, height: 38)
                 .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.08)))
             // Pill sized to the glyph, sitting on the tile's corner clear of the ear cups.
-            Image(systemName: critical ? "battery.0percent" : "battery.25percent")
+            Image(systemName: badge.symbol)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(critical ? Color.red : Color.orange)
+                .foregroundStyle(badge.color)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(.background))

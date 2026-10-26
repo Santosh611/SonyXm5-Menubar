@@ -8,6 +8,7 @@ struct MenuView: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage(AudioOutput.switchOnConnectKey) private var switchAudioOnConnect = true
     @AppStorage(HeadphoneController.switchSoundKey) private var playSwitchSound = true
+    @AppStorage(HeadphoneController.autoSwitchKey) private var autoSwitchToMac = true
 
     init(controller: HeadphoneController, showAmbient: Bool = false, showBands: Bool = false) {
         self.controller = controller
@@ -25,6 +26,10 @@ struct MenuView: View {
                 if controller.noiseMode == .ambient { ambientControls }
                 Divider()
                 equalizer
+                if !controller.devices.isEmpty {
+                    Divider()
+                    devicesSection
+                }
             } else {
                 statusMessage
             }
@@ -185,6 +190,18 @@ struct MenuView: View {
         }
     }
 
+    /// Multipoint devices, like the AirPods device list: tap a connected one to move playback there.
+    private var devicesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionTitle("Devices")
+            ForEach(controller.devices) { device in
+                DeviceRow(device: device, isThisMac: controller.isThisMac(device)) {
+                    controller.switchAudio(to: device)
+                }
+            }
+        }
+    }
+
     private var footer: some View {
         HStack {
             if controller.status == .connected {
@@ -196,6 +213,7 @@ struct MenuView: View {
             Menu {
                 Toggle("Play Sound When Switching Modes", isOn: $playSwitchSound)
                 Toggle("Switch Mac Audio on Connect", isOn: $switchAudioOnConnect)
+                Toggle("Move Headphones to This Mac When It Plays", isOn: $autoSwitchToMac)
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                 Divider()
                 Button("Quit SonyBar") { NSApplication.shared.terminate(nil) }
@@ -281,6 +299,47 @@ private struct ModeButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private struct DeviceRow: View {
+    let device: PairedDevice
+    let isThisMac: Bool
+    let onSelect: () -> Void
+
+    private var detail: String {
+        if device.playing { return "Playing" }
+        return device.connected ? "Connected" : "Not connected"
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Image(systemName: device.symbol)
+                    .font(.system(size: 15))
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(isThisMac ? "This Mac" : device.name)
+                        .font(.callout)
+                        .lineLimit(1)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if device.playing {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!device.connected || device.playing)
+        .opacity(device.connected ? 1 : 0.45)
+        .help(device.connected && !device.playing ? "Play on \(isThisMac ? "this Mac" : device.name)" : "")
+        .accessibilityLabel("\(isThisMac ? "This Mac" : device.name), \(detail)")
     }
 }
 

@@ -21,6 +21,8 @@
 - **Equalizer**: Sony's presets (Bright, Excited, Mellow, Relaxed, Vocal, Treble Boost, Bass Boost, Speech, Custom 1/2) and a Manual EQ with Clear Bass and five bands
 - **Battery**: exact percentage in the panel
 - **Volume slider** that sets the headphones' own volume, so it works for audio from your phone too (multipoint), and follows changes made on the headset
+- **Devices (multipoint)**: see which of your devices are connected to the headphones and which one is playing; click one to move playback there
+- **Follows your Mac, like AirPods**: when the Mac starts playing while your phone has the headphones, playback moves to the Mac, with a banner to switch back. Can be turned off in the ⚙︎ menu
 - **Low-battery warnings**: percentage appears next to the menu bar icon at 20% or below, with an alert at 20% and 10%
 - **Stays in sync**: press the NC/Ambient button on the headphones and the menu updates instantly
 - **Only there when you need it**: like AirPods, the menu bar icon appears when the headphones connect and disappears when they disconnect

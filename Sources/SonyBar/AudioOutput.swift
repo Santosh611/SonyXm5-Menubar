@@ -72,6 +72,27 @@ enum AudioOutput {
         return status == noErr
     }
 
+    // MARK: - Playback activity
+
+    private static var runningAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain)
+
+    /// True while any app on this Mac is playing through the device.
+    static func isRunning(_ id: AudioDeviceID) -> Bool {
+        var value = UInt32(0)
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(id, &runningAddress, 0, nil, &size, &value) == noErr && value != 0
+    }
+
+    /// Calls `onChange` on the main queue when the device starts or stops playing. Returns a cancel closure.
+    static func observeRunning(_ id: AudioDeviceID, onChange: @escaping (Bool) -> Void) -> () -> Void {
+        let block: AudioObjectPropertyListenerBlock = { _, _ in onChange(isRunning(id)) }
+        AudioObjectAddPropertyListenerBlock(id, &runningAddress, .main, block)
+        return { AudioObjectRemovePropertyListenerBlock(id, &runningAddress, .main, block) }
+    }
+
     // MARK: - Helpers
 
     private static func hasOutputStreams(_ id: AudioDeviceID) -> Bool {
