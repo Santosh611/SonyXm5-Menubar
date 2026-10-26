@@ -9,6 +9,7 @@ struct MenuView: View {
     @AppStorage(AudioOutput.switchOnConnectKey) private var switchAudioOnConnect = true
     @AppStorage(HeadphoneController.switchSoundKey) private var playSwitchSound = true
     @AppStorage(HeadphoneController.autoSwitchKey) private var autoSwitchToMac = true
+    @AppStorage(HeadphoneController.connectBannerKey) private var showConnectBanner = true
 
     init(controller: HeadphoneController, showAmbient: Bool = false, showBands: Bool = false) {
         self.controller = controller
@@ -66,7 +67,7 @@ struct MenuView: View {
         switch controller.status {
         case .connected: "Connected"
         case .connecting: "Connecting…"
-        case .noHeadphones: "Not connected"
+        case .noHeadphones, .disconnected: "Not connected"
         case .failed: "Connection problem"
         }
     }
@@ -77,6 +78,14 @@ struct MenuView: View {
             switch controller.status {
             case .noHeadphones:
                 Text("Connect your headphones in Bluetooth settings. Controls appear here automatically.")
+            case .disconnected:
+                Button("Connect") { controller.connectHeadphones() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+                if let error = controller.connectError {
+                    Text(error)
+                }
             case .connecting:
                 ProgressView().controlSize(.small)
             case .failed(let reason):
@@ -84,7 +93,7 @@ struct MenuView: View {
             case .connected:
                 EmptyView()
             }
-            if controller.status != .connecting {
+            if controller.status != .connecting && controller.status != .disconnected {
                 Button("Try Again") { controller.reconnect() }
             }
         }
@@ -214,6 +223,7 @@ struct MenuView: View {
                 Toggle("Play Sound When Switching Modes", isOn: $playSwitchSound)
                 Toggle("Switch Mac Audio on Connect", isOn: $switchAudioOnConnect)
                 Toggle("Move Headphones to This Mac When It Plays", isOn: $autoSwitchToMac)
+                Toggle("Show Notification When Connected", isOn: $showConnectBanner)
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                 Divider()
                 Button("Quit SonyBar") { NSApplication.shared.terminate(nil) }
@@ -365,20 +375,22 @@ private struct BandSlider: View {
     }
 }
 
+func batterySymbol(level: Int, charging: Bool) -> String {
+    if charging { return "battery.100.bolt" }
+    switch level {
+    case ..<13: return "battery.0"
+    case ..<38: return "battery.25"
+    case ..<63: return "battery.50"
+    case ..<88: return "battery.75"
+    default: return "battery.100"
+    }
+}
+
 private struct BatteryBadge: View {
     let level: Int
     let charging: Bool
 
-    private var symbol: String {
-        if charging { return "battery.100.bolt" }
-        switch level {
-        case ..<13: return "battery.0"
-        case ..<38: return "battery.25"
-        case ..<63: return "battery.50"
-        case ..<88: return "battery.75"
-        default: return "battery.100"
-        }
-    }
+    private var symbol: String { batterySymbol(level: level, charging: charging) }
 
     var body: some View {
         HStack(spacing: 4) {

@@ -7,6 +7,8 @@ import AppKit
 final class HeadphoneController: NSObject, ObservableObject {
     enum Status: Equatable {
         case noHeadphones
+        /// Paired but not connected to this Mac; the panel offers to connect.
+        case disconnected
         case connecting
         case connected
         case failed(String)
@@ -14,6 +16,8 @@ final class HeadphoneController: NSObject, ObservableObject {
 
     @Published private(set) var status: Status = .noHeadphones
     @Published private(set) var deviceName: String?
+    /// Why the last Connect didn't work, shown under the button.
+    @Published private(set) var connectError: String?
 
     @Published private(set) var battery: Int?
     @Published private(set) var isCharging = false
@@ -38,6 +42,10 @@ final class HeadphoneController: NSObject, ObservableObject {
     /// Device playback was taken from by an automatic switch, until the switch shows up in the list.
     private var autoSwitchedFrom: PairedDevice?
     private var macAudioAttempts = 0
+
+    private let startedAt = Date()
+    /// Set when the headset connects while SonyBar is running; shown once the battery is known.
+    private var announceConnection = false
 
     private var link: HeadphoneLink?
     private var lowBattery = LowBatteryTracker()
@@ -98,7 +106,7 @@ final class HeadphoneController: NSObject, ObservableObject {
         deviceName = device.name
         guard device.isConnected() else {
             Log.debug("\(device.name ?? "Headphones") not connected, skipping control channel")
-            status = .noHeadphones
+            status = .disconnected
             return
         }
         // Background retries keep showing the last problem instead of flipping back to a spinner.
@@ -115,6 +123,24 @@ final class HeadphoneController: NSObject, ObservableObject {
         }
     }
 
+    /// Connect button: bring up the Bluetooth link, like Connect in Bluetooth settings.
+    /// The connect notification then opens the control channel as usual.
+    func connectHeadphones() {
+        guard let device = Self.findHeadphones(), !device.isConnected() else { return connectIfPossible() }
+        Log.debug("Connecting to \(device.name ?? "headphones")")
+        connectError = nil
+        status = .connecting
+        let result = device.openConnection(self)
+        if result != kIOReturnSuccess { connectionComplete(device, status: result) }
+    }
+
+    @objc func connectionComplete(_ device: IOBluetoothDevice!, status result: IOReturn) {
+        guard result != kIOReturnSuccess else { return }
+        Log.debug(String(format: "Bluetooth connect failed (0x%08X)", result))
+        connectError = "Couldn't reach the headphones. Make sure they're on and nearby."
+        status = .disconnected
+    }
+
     /// Paired Sony headset with the MDR service; prefers one that's currently connected.
     private static func findHeadphones() -> IOBluetoothDevice? {
         let paired = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
@@ -129,6 +155,8 @@ final class HeadphoneController: NSObject, ObservableObject {
         guard Self.findHeadphones()?.addressString == device.addressString else { return }
         Log.debug("\(device.name ?? "device") connected")
         reconnectAttempts = 0
+        // IOBluetooth reports already-connected devices right after launch; only announce real connections.
+        if Date().timeIntervalSince(startedAt) > 5 { announceConnection = true }
         routeAudioToHeadphones(device)
         // Give the audio profiles a moment to settle before opening the control channel.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -155,7 +183,7 @@ final class HeadphoneController: NSObject, ObservableObject {
 
     @objc private func deviceDisconnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         Log.debug("\(device.name ?? "device") disconnected")
-        tearDown(status: .noHeadphones)
+        tearDown(status: .disconnected)
     }
 
     /// macOS doesn't always pick the headset as output when it reconnects (common with multipoint).
@@ -231,13 +259,15 @@ final class HeadphoneController: NSObject, ObservableObject {
             probeNcAsm()
             macAudioAttempts = 0
             attachMacAudio()
+            // Normally the battery reply triggers the banner; don't wait forever for it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.announceConnectionIfNeeded() }
             batteryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
                 self?.link?.send(Command.getBattery)
             }
         case .closed(let reason):
             Log.debug("Control channel lost: \(reason)")
             let stillConnected = link?.device.isConnected() ?? false
-            tearDown(status: stillConnected ? .failed(reason) : .noHeadphones)
+            tearDown(status: stillConnected ? .failed(reason) : .disconnected)
             if stillConnected { scheduleReconnect() }
         case .packet(let packet):
             switch packet.type {
@@ -314,10 +344,26 @@ final class HeadphoneController: NSObject, ObservableObject {
     func updateBattery(level: Int, charging: Bool) {
         battery = level
         isCharging = charging
+        announceConnectionIfNeeded()
         if let alert = lowBattery.update(level: level, charging: charging) {
             Log.debug("Low battery alert: \(alert) at \(level)%")
             BatteryNotifier.post(alert, battery: level, deviceName: deviceName ?? "Headphones")
         }
+    }
+
+    static let connectBannerKey = "showConnectBanner"
+
+    /// AirPods-style "Connected" banner with the battery level.
+    private func announceConnectionIfNeeded() {
+        guard announceConnection, status == .connected else { return }
+        announceConnection = false
+        guard UserDefaults.standard.object(forKey: Self.connectBannerKey) as? Bool ?? true else { return }
+        let body = battery.map { "Connected · \($0)%\(isCharging ? ", charging" : "")" } ?? "Connected"
+        BannerWindow.show(
+            title: deviceName ?? "Headphones", body: body,
+            symbol: battery.map { batterySymbol(level: $0, charging: isCharging) } ?? "checkmark",
+            color: (battery ?? 100) <= LowBatteryTracker.menuBarThreshold && !isCharging ? .orange : .green,
+            action: nil)
     }
 
     /// Battery to show beside the menu bar icon, only when it needs attention.
@@ -471,21 +517,15 @@ final class HeadphoneController: NSObject, ObservableObject {
               devices.first(where: \.playing).map(isThisMac) == true else { return }
         autoSwitchedFrom = nil
         BannerWindow.show(
-            title: "\(deviceName ?? "Headphones") moved to this Mac",
-            body: "Playback was on \(previous.name).",
+            title: deviceName ?? "Headphones",
+            body: "Moved to this Mac from \(previous.name)",
             symbol: "laptopcomputer",
-            action: .init(title: "Back to \(Self.shortName(previous.name))") { [weak self] in
+            action: .init(title: "Move Back") { [weak self] in
                 guard let self, let device = self.devices.first(where: { $0.address == previous.address }) else { return }
                 self.switchAudio(to: device)
             })
     }
 
-    /// "Santosh’s iPhone" -> "iPhone", to keep the banner button short.
-    private static func shortName(_ name: String) -> String {
-        let parts = name.split(whereSeparator: { $0 == "’" || $0 == "'" })
-        guard parts.count == 2, parts[1].hasPrefix("s ") else { return name }
-        return String(parts[1].dropFirst(2))
-    }
 
     /// For `--probe --send`: queue a raw Table-1 payload.
     func sendRaw(_ payload: [UInt8], table: MDR.DataType = .mdr) {

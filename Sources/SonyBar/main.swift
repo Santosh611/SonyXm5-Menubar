@@ -22,8 +22,8 @@ struct SonyBarApp: App {
     @StateObject private var controller = HeadphoneController()
 
     var body: some Scene {
-        // Like AirPods: the icon only exists while the headphones are connected to this Mac.
-        // "Connecting" and "failed" still count, so a control-channel problem stays visible.
+        // Shown while headphones are paired, so they can be connected from here. Hidden only when
+        // there's no Sony headset at all; "connecting" and "failed" stay visible too.
         MenuBarExtra(isInserted: Binding(
             get: { controller.status != .noHeadphones },
             set: { _ in })) {

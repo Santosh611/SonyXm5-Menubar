@@ -19,6 +19,9 @@ enum Screenshots {
         Scene(file: "panel-light.png", dark: false, showAmbient: true, showBands: false, showPanel: true, showBanner: false),
         Scene(file: "equalizer.png", dark: true, showAmbient: false, showBands: true, showPanel: true, showBanner: false),
         Scene(file: "battery-alert.png", dark: true, showAmbient: false, showBands: false, showPanel: false, showBanner: true),
+        Scene(file: "moved-to-mac.png", dark: true, showAmbient: false, showBands: false, showPanel: false, showBanner: true),
+        Scene(file: "connected.png", dark: true, showAmbient: false, showBands: false, showPanel: false, showBanner: true),
+        Scene(file: "moved-to-mac-light.png", dark: false, showAmbient: false, showBands: false, showPanel: false, showBanner: true),
     ]
 
     private static var windows: [NSWindow] = []
@@ -67,10 +70,21 @@ enum Screenshots {
         let panelHost = NSHostingView(rootView: panelView)
         let panelSize = scene.showPanel ? panelHost.fittingSize : .zero
 
-        let bannerHost = NSHostingView(rootView: BannerView(
-            title: "WH-1000XM5 battery low", message: "20% remaining. Charge soon.",
-            badge: .init(symbol: "battery.25percent", color: .orange),
-            onDismiss: {}, onHover: { _ in }))
+        let bannerHost = scene.file.hasPrefix("connected")
+            ? NSHostingView(rootView: AnyView(BannerView(
+                title: "WH-1000XM5", message: "Connected · 82%",
+                badge: .init(symbol: "battery.75", color: .green),
+                onDismiss: {}, onHover: { _ in })))
+            : scene.file.hasPrefix("moved")
+            ? NSHostingView(rootView: AnyView(BannerView(
+                title: "WH-1000XM5", message: "Moved to this Mac from Santosh’s iPhone",
+                badge: .init(symbol: "laptopcomputer", color: .accentColor),
+                action: .init(title: "Move Back") {}, alwaysShowAction: true,
+                onDismiss: {}, onHover: { _ in })))
+            : NSHostingView(rootView: AnyView(BannerView(
+                title: "WH-1000XM5 battery low", message: "20% remaining. Charge soon.",
+                badge: .init(symbol: "battery.25percent", color: .orange),
+                onDismiss: {}, onHover: { _ in })))
         let bannerSize = scene.showBanner ? bannerHost.fittingSize : .zero
 
         let content = NSSize(width: max(panelSize.width, bannerSize.width),

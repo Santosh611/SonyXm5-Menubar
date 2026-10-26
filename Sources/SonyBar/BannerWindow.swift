@@ -25,8 +25,8 @@ enum BannerWindow {
     }
 
     /// Silent banner with a device badge and an optional button, e.g. after an automatic source switch.
-    static func show(title: String, body: String, symbol: String, action: Action?) {
-        show(title: title, body: body, badge: .init(symbol: symbol, color: .accentColor), sound: nil, action: action)
+    static func show(title: String, body: String, symbol: String, color: Color = .accentColor, action: Action?) {
+        show(title: title, body: body, badge: .init(symbol: symbol, color: color), sound: nil, action: action)
     }
 
     private static func show(title: String, body: String, badge: BannerView.Badge, sound: String?, action: Action?) {
@@ -117,12 +117,16 @@ struct BannerView: View {
     let message: String
     let badge: Badge
     var action: BannerWindow.Action?
+    /// For screenshots, which can't hover.
+    var alwaysShowAction = false
     let onDismiss: () -> Void
     let onHover: (Bool) -> Void
 
-    /// System notification banner metrics.
+    /// System notification banner metrics (macOS 26 rounds them more than earlier releases).
     static let width: CGFloat = 344
-    static let cornerRadius: CGFloat = 18
+    static var cornerRadius: CGFloat {
+        if #available(macOS 26, *) { 24 } else { 18 }
+    }
     /// Transparent room around the card so the close button and shadow aren't clipped.
     static let outerInset: CGFloat = 10
 
@@ -153,9 +157,15 @@ struct BannerView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    Text("now")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                    // Like system notifications, the action replaces the timestamp while hovered.
+                    if let action, hovering || alwaysShowAction {
+                        ActionPill(title: action.title, perform: action.perform)
+                            .transition(.opacity)
+                    } else {
+                        Text("now")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(message)
                     .font(.system(size: 13))
@@ -163,18 +173,11 @@ struct BannerView: View {
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let action {
-                Button(action.title, action: action.perform)
-                    .controlSize(.small)
-                    .fixedSize()
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(width: Self.width, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(Color.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        .modifier(NotificationBackground(cornerRadius: Self.cornerRadius))
         .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         .onTapGesture(perform: onDismiss)
         .accessibilityElement(children: .combine)
@@ -208,11 +211,58 @@ struct BannerView: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: 20, height: 20)
+                .modifier(CloseButtonBackground())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close")
+    }
+}
+
+/// Liquid Glass on macOS 26, like system notifications; frosted material before that.
+private struct NotificationBackground: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            content
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(Color.primary.opacity(0.1)))
+                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        }
+    }
+}
+
+private struct CloseButtonBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: Circle())
+        } else {
+            content
                 .background(.regularMaterial, in: Circle())
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.15)))
                 .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
         }
+    }
+}
+
+/// Compact grey pill, the way macOS draws a notification's action button.
+private struct ActionPill: View {
+    let title: String
+    let perform: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        Button(action: perform) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.primary.opacity(pressed ? 0.2 : 0.1)))
+        }
         .buttonStyle(.plain)
-        .accessibilityLabel("Close")
+        .fixedSize()
+        .onLongPressGesture(minimumDuration: 0, pressing: { pressed = $0 }, perform: {})
     }
 }

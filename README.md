@@ -25,7 +25,7 @@
 - **Follows your Mac, like AirPods**: when the Mac starts playing while your phone has the headphones, playback moves to the Mac, with a banner to switch back. Can be turned off in the ⚙︎ menu
 - **Low-battery warnings**: percentage appears next to the menu bar icon at 20% or below, with an alert at 20% and 10%
 - **Stays in sync**: press the NC/Ambient button on the headphones and the menu updates instantly
-- **Only there when you need it**: like AirPods, the menu bar icon appears when the headphones connect and disappears when they disconnect
+- **Connect from the menu bar**: the icon stays while your headphones are paired; when they're not connected to the Mac, the panel shows a Connect button. A "Connected" banner with the battery level appears each time they connect, like AirPods
 - **Reconnects automatically** when your headphones connect to the Mac and after your Mac wakes from sleep. If the headphones don't answer, SonyBar keeps retrying in the background instead of spinning forever
 - **Switches Mac audio to the headphones** when they connect, even when macOS stays on the speakers (common with multipoint). Can be turned off in the ⚙︎ menu
 - **Turn off headphones** from the Mac, plus **Launch at Login**
