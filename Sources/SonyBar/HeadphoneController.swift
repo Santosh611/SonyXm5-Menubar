@@ -93,6 +93,14 @@ final class HeadphoneController: NSObject, ObservableObject {
         ]
     }
 
+    /// Demo video: playback moves to the demo device with this address.
+    func demoPlay(on address: String) {
+        devices = devices.map {
+            PairedDevice(address: $0.address, name: $0.name, connected: $0.connected,
+                         playing: $0.address == address, kind: $0.kind)
+        }
+    }
+
     // MARK: - Connection
 
     func connectIfPossible() {

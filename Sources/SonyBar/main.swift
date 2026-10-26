@@ -118,6 +118,9 @@ func testBatteryAlerts() {
 if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
     let dir = CommandLine.arguments.indices.contains(i + 1) ? CommandLine.arguments[i + 1] : "docs/screenshots"
     Screenshots.run(outputDir: dir)
+} else if let i = CommandLine.arguments.firstIndex(of: "--demo-video") {
+    let path = CommandLine.arguments.indices.contains(i + 1) ? CommandLine.arguments[i + 1] : "SonyBar-demo.mov"
+    Screenshots.recordVideo(to: path)
 } else if CommandLine.arguments.contains("--list-audio") {
     let current = AudioOutput.defaultOutput
     for device in AudioOutput.outputDevices() {

@@ -122,6 +122,106 @@ enum Screenshots {
         return CGRect(x: backdropFrame.minX, y: top, width: backdropFrame.width, height: backdropFrame.height)
     }
 
+    // MARK: - Demo video
+
+    /// `--demo-video <file.mov>`: records the panel being used with demo data, over the same backdrop.
+    static func recordVideo(to path: String) {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let appearance = NSAppearance(named: .darkAqua)
+        NSApp.appearance = appearance
+
+        let controller = HeadphoneController(demo: ())
+        let panelView = MenuView(controller: controller, showAmbient: true)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.12)))
+            .padding(1)
+        // Ambient with its controls open is the tallest state in the video; other states sit top-aligned in it.
+        let panelSize = NSHostingView(rootView: panelView).fittingSize
+        let bannerHost = NSHostingView(rootView: BannerView(
+            title: "WH-1000XM5", message: "Moved to this Mac from iPhone",
+            badge: .init(symbol: "laptopcomputer", color: .accentColor),
+            action: .init(title: "Move Back") {}, alwaysShowAction: true,
+            onDismiss: {}, onHover: { _ in }))
+        let bannerSize = bannerHost.fittingSize
+
+        let padding: CGFloat = 48, gap: CGFloat = 16
+        let size = NSSize(width: max(panelSize.width, bannerSize.width) + padding * 2,
+                          height: bannerSize.height + gap + panelSize.height + padding * 2)
+        guard let screen = NSScreen.main else { exit(1) }
+        let visible = screen.visibleFrame
+        let backdropFrame = NSRect(x: visible.minX + 40, y: visible.maxY - size.height - 40,
+                                   width: size.width, height: size.height)
+        let backdrop = makeWindow(frame: backdropFrame, level: .screenSaver, appearance: appearance)
+        backdrop.contentView = NSHostingView(rootView: Backdrop(dark: true))
+
+        let above = NSWindow.Level(NSWindow.Level.screenSaver.rawValue + 1)
+        let panel = makeWindow(
+            frame: NSRect(x: backdropFrame.midX - panelSize.width / 2, y: backdropFrame.minY + padding,
+                          width: panelSize.width, height: panelSize.height),
+            level: above, appearance: appearance)
+        let panelHost = NSHostingView(rootView: panelView.frame(maxHeight: .infinity, alignment: .top))
+        panelHost.sizingOptions = []
+        panel.contentView = panelHost
+
+        let banner = makeWindow(
+            frame: NSRect(x: backdropFrame.midX - bannerSize.width / 2,
+                          y: backdropFrame.maxY - padding - bannerSize.height,
+                          width: bannerSize.width, height: bannerSize.height),
+            level: above, appearance: appearance)
+        banner.contentView = bannerHost
+        banner.alphaValue = 0
+
+        backdrop.orderFrontRegardless()
+        panel.orderFrontRegardless()
+
+        func at(_ time: TimeInterval, _ step: @escaping () -> Void) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + time, execute: step)
+        }
+        /// Moves a value one unit at a time, like a slider being dragged.
+        func ramp(_ from: Int, _ to: Int, start: TimeInterval, interval: TimeInterval = 0.07, _ apply: @escaping (Double) -> Void) {
+            let stride = from < to ? 1 : -1
+            for (i, value) in Swift.stride(from: from, through: to, by: stride).enumerated() {
+                at(start + Double(i) * interval) { apply(Double(value)) }
+            }
+        }
+
+        let duration = 18
+        // Let materials settle, then record the backdrop's area only.
+        at(1) {
+            let top = screen.frame.maxY - backdropFrame.maxY
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            task.arguments = ["-v", "-V", "\(duration)", "-R",
+                              "\(Int(backdropFrame.minX)),\(Int(top)),\(Int(backdropFrame.width)),\(Int(backdropFrame.height))",
+                              path]
+            task.terminationHandler = { _ in
+                print("Video written to \(path)")
+                exit(0)
+            }
+            do { try task.run() } catch { print("screencapture failed: \(error)"); exit(1) }
+
+            at(2.0) { controller.setNoiseMode(.noiseCancelling) }
+            at(3.5) { controller.setNoiseMode(.off) }
+            at(5.0) { controller.setNoiseMode(.ambient) }
+            ramp(14, 5, start: 6.0) { controller.ambientLevel = $0 }
+            ramp(5, 17, start: 6.8) { controller.ambientLevel = $0 }
+            at(8.0) { controller.setVoiceFocus(false) }
+            ramp(18, 26, start: 8.8, interval: 0.09) { controller.setVolume($0) }
+            at(10.5) { controller.setEqPreset(EqPreset.all.first { $0.name == "Bass Boost" }!.id) }
+            at(12.0) { controller.demoPlay(on: "01") }
+            at(14.0) {
+                controller.demoPlay(on: "00")
+                banner.orderFrontRegardless()
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.35
+                    banner.animator().alphaValue = 1
+                }
+            }
+        }
+        app.run()
+    }
+
     private static func makeWindow(frame: NSRect, level: NSWindow.Level, appearance: NSAppearance?) -> NSWindow {
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.level = level

@@ -117,6 +117,7 @@ $BIN --test-audio-switch                      # move output away and back to the
 $BIN --test-battery-alerts                    # low-battery alert logic
 $BIN --test-notification [--critical]         # show the alert banner
 $BIN --screenshots docs/screenshots           # regenerate README screenshots (demo data)
+$BIN --demo-video SonyBar-demo.mov            # record an 18s demo of the panel (demo data)
 swift tools/make-icon.swift                   # regenerate Resources/AppIcon.icns
 ```
 
