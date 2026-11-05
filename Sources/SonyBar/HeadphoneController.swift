@@ -20,6 +20,9 @@ final class HeadphoneController: NSObject, ObservableObject {
     @Published private(set) var deviceName: String?
     /// Why the last Connect didn't work, shown under the button.
     @Published private(set) var connectError: String?
+    @Published private(set) var pairedHeadphones: [HeadphoneDiscovery.Candidate] = []
+    private var discoveryQueries: [String: HeadphoneServiceQuery] = [:]
+    private var bluetoothReady = false
 
     @Published private(set) var battery: Int?
     @Published private(set) var isCharging = false
@@ -67,11 +70,23 @@ final class HeadphoneController: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        status = .connecting
+        // macOS can take a while to initialize its Bluetooth coordinator. Keep the menu
+        // responsive while it warms up; all notifications and headset operations stay on main.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = IOBluetoothDevice.pairedDevices()
+            DispatchQueue.main.async { [weak self] in self?.startBluetooth() }
+        }
+    }
+
+    private func startBluetooth() {
+        bluetoothReady = true
         connectNotification = IOBluetoothDevice.register(
             forConnectNotifications: self, selector: #selector(deviceConnected(_:device:)))
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake(_:)), name: NSWorkspace.didWakeNotification, object: nil)
         connectIfPossible()
+        scanHeadphones()
     }
 
     /// Offline controller with fixed sample state, for README screenshots. Never touches Bluetooth.
@@ -104,6 +119,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     // MARK: - Connection
 
     func connectIfPossible() {
+        guard bluetoothReady else { return }
         // A link that exists is either open or still opening. Replacing an open in progress
         // aborts it mid-handshake, which can leave the headset ignoring every later attempt.
         guard link == nil else { return }
@@ -140,6 +156,7 @@ final class HeadphoneController: NSObject, ObservableObject {
     /// Connect button: bring up the Bluetooth link, like Connect in Bluetooth settings.
     /// The connect notification then opens the control channel as usual.
     func connectHeadphones() {
+        guard bluetoothReady else { return }
         guard let device = Self.findHeadphones(), !device.isConnected() else { return connectIfPossible() }
         Log.debug("Connecting to \(device.name ?? "headphones")")
         connectError = nil
@@ -155,17 +172,41 @@ final class HeadphoneController: NSObject, ObservableObject {
         status = .disconnected
     }
 
-    /// Paired Sony headset with the MDR service; prefers one that's currently connected.
     private static func findHeadphones() -> IOBluetoothDevice? {
-        let paired = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
-        let sony = paired.filter { device in
-            let name = device.name ?? ""
-            return name.contains("1000XM") || name.hasPrefix("WH-") || name.hasPrefix("WF-") || name.contains("LinkBuds")
+        HeadphoneDiscovery.findHeadphones()
+    }
+
+    /// Only query already connected devices automatically; an SDP query can otherwise connect them.
+    func scanHeadphones() {
+        guard bluetoothReady else { return }
+        pairedHeadphones = HeadphoneDiscovery.candidates()
+        for device in HeadphoneDiscovery.pairedDevices() where device.isConnected() {
+            guard let address = device.addressString,
+                  device.getServiceRecord(for: HeadphoneDiscovery.serviceUUID) == nil,
+                  discoveryQueries[address] == nil else { continue }
+            let query = HeadphoneServiceQuery(device: device) { [weak self] _ in
+                guard let self else { return }
+                self.discoveryQueries[address] = nil
+                self.pairedHeadphones = HeadphoneDiscovery.candidates()
+                // Discovery must not take controls back while another device is using them.
+                if self.status == .noHeadphones { self.connectIfPossible() }
+            }
+            discoveryQueries[address] = query
+            query.start()
         }
-        return sony.first(where: { $0.isConnected() }) ?? sony.first
+    }
+
+    func selectHeadphones(address: String?) {
+        reconnectTimer?.invalidate()
+        audioRouteTimer?.invalidate()
+        tearDown(status: .noHeadphones)
+        UserDefaults.standard.set(address, forKey: HeadphoneDiscovery.selectionKey)
+        connectHeadphones()
+        scanHeadphones()
     }
 
     @objc private func deviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        scanHeadphones()
         guard Self.findHeadphones()?.addressString == device.addressString else { return }
         Log.debug("\(device.name ?? "device") connected")
         reconnectAttempts = 0
@@ -265,6 +306,10 @@ final class HeadphoneController: NSObject, ObservableObject {
                 self?.reconnectAttempts = 0
             }
             if let device = link?.device {
+                if let address = device.addressString {
+                    UserDefaults.standard.set(HeadphoneDiscovery.normalize(address),
+                                              forKey: HeadphoneDiscovery.selectionKey)
+                }
                 disconnectNotification = device.register(
                     forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
             }

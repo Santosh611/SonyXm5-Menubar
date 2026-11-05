@@ -40,6 +40,7 @@ struct MenuView: View {
         }
         .padding(14)
         .frame(width: 300)
+        .onAppear { controller.scanHeadphones() }
     }
 
     // MARK: - Sections
@@ -78,8 +79,8 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 8) {
             switch controller.status {
             case .noHeadphones:
-                Text("Connect your headphones in Bluetooth settings. Controls appear here automatically.")
-                Button("Try Again") { controller.reconnect() }
+                Text("Choose your headphones from Settings below. If they're missing, pair them in Bluetooth settings first.")
+                Button("Scan Again") { controller.scanHeadphones(); controller.reconnect() }
             case .disconnected:
                 Button("Connect") { controller.connectHeadphones() }
                     .buttonStyle(.borderedProminent)
@@ -223,6 +224,17 @@ struct MenuView: View {
             }
             Spacer()
             Menu {
+                Menu("Choose Headphones") {
+                    ForEach(controller.pairedHeadphones) { device in
+                        Button(device.name + (device.connected ? " (Connected)" : "")) {
+                            controller.selectHeadphones(address: device.id)
+                        }
+                    }
+                    Divider()
+                    Button("Detect Automatically") { controller.selectHeadphones(address: nil) }
+                    Button("Scan Again") { controller.scanHeadphones() }
+                }
+                Divider()
                 Toggle("Play Sound When Switching Modes", isOn: $playSwitchSound)
                 Toggle("Switch Mac Audio on Connect", isOn: $switchAudioOnConnect)
                 Toggle("Move Headphones to This Mac When It Plays", isOn: $autoSwitchToMac)

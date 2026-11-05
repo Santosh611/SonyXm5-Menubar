@@ -22,11 +22,8 @@ struct SonyBarApp: App {
     @StateObject private var controller = HeadphoneController()
 
     var body: some Scene {
-        // Shown while headphones are paired, so they can be connected from here. Hidden only when
-        // there's no Sony headset at all; "connecting" and "failed" stay visible too.
-        MenuBarExtra(isInserted: Binding(
-            get: { controller.status != .noHeadphones },
-            set: { _ in })) {
+        // Keep setup and recovery available even when discovery cannot identify a headset.
+        MenuBarExtra {
             MenuView(controller: controller)
         } label: {
             if let battery = controller.menuBarBattery {
@@ -128,8 +125,7 @@ if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
     }
 } else if CommandLine.arguments.contains("--test-audio-switch") {
     // Moves output to another device briefly, then lets the headset matcher switch back.
-    let paired = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
-    guard let headset = paired.first(where: { ($0.name ?? "").contains("1000XM") }),
+    guard let headset = HeadphoneDiscovery.findHeadphones(),
           let target = AudioOutput.device(bluetoothAddress: headset.addressString, name: headset.name),
           let other = AudioOutput.outputDevices().first(where: { $0.id != target.id }) else {
         print("Headset audio output not found"); exit(1)
