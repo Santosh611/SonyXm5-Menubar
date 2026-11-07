@@ -23,6 +23,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private var unansweredCommands = 0
     private var ackTimer: Timer?
     private var openTimer: Timer?
+    private var serviceQuery: HeadphoneServiceQuery?
 
     private static let ackTimeout: TimeInterval = 1.0
     /// The headset sometimes accepts the open request and never answers (e.g. while another
@@ -40,15 +41,30 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var isOpen: Bool { channel?.isOpen() ?? false }
 
     func open() throws {
-        let uuid = Self.sdpUUID(MDR.serviceUUID)
-        var record = device.getServiceRecord(for: uuid)
-        if record == nil {
-            // SDP cache may be stale; refresh synchronously once.
-            device.performSDPQuery(nil, uuids: [uuid])
-            record = device.getServiceRecord(for: uuid)
+        if let record = device.getServiceRecord(for: HeadphoneDiscovery.serviceUUID) {
+            try openChannel(record)
+            return
         }
-        guard let record else { throw LinkError("Headphones don't expose the Sony control service") }
+        let query = HeadphoneServiceQuery(device: device) { [weak self] result in
+            guard let self else { return }
+            self.serviceQuery = nil
+            do {
+                guard result == kIOReturnSuccess else {
+                    throw LinkError("Couldn't discover the Sony control service")
+                }
+                guard let record = self.device.getServiceRecord(for: HeadphoneDiscovery.serviceUUID) else {
+                    throw LinkError("This device doesn't expose the Sony control service")
+                }
+                try self.openChannel(record)
+            } catch {
+                self.onEvent?(.closed(reason: error.localizedDescription))
+            }
+        }
+        serviceQuery = query
+        query.start()
+    }
 
+    private func openChannel(_ record: IOBluetoothSDPServiceRecord) throws {
         var channelID: BluetoothRFCOMMChannelID = 0
         guard record.getRFCOMMChannelID(&channelID) == kIOReturnSuccess else {
             throw LinkError("Couldn't resolve the control channel")
@@ -78,6 +94,8 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     func close() {
+        serviceQuery?.cancel()
+        serviceQuery = nil
         openTimer?.invalidate()
         ackTimer?.invalidate()
         queue.removeAll()
@@ -189,7 +207,7 @@ final class HeadphoneLink: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     // MARK: - Helpers
 
-    private static func sdpUUID(_ string: String) -> IOBluetoothSDPUUID {
+    static func sdpUUID(_ string: String) -> IOBluetoothSDPUUID {
         let uuid = UUID(uuidString: string)!
         var bytes = uuid.uuid
         return withUnsafeBytes(of: &bytes) { IOBluetoothSDPUUID(bytes: $0.baseAddress, length: 16) }

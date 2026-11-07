@@ -12,7 +12,8 @@ let package = Package(
                 .linkedFramework("IOBluetooth"),
                 .linkedFramework("ServiceManagement"),
             ]
-        )
+        ),
+        .testTarget(name: "SonyBarTests", dependencies: ["SonyBar"])
     ],
     swiftLanguageModes: [.v5]
 )
