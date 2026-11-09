@@ -42,8 +42,9 @@ final class HeadphoneController: NSObject, ObservableObject {
     /// Devices paired with the headset (multipoint), with which one has playback.
     @Published private(set) var devices: [PairedDevice] = []
     private var macAudioDevice: AudioDeviceID?
-    private var stopObservingMacAudio: (() -> Void)?
-    private var autoSwitchWork: DispatchWorkItem?
+    private var playbackMonitor: MacPlaybackMonitor?
+    /// After the headset refuses an automatic switch (e.g. during a call), don't ask again until then.
+    private var autoSwitchPausedUntil = Date.distantPast
     /// Device playback was taken from by an automatic switch, until the switch shows up in the list.
     private var autoSwitchedFrom: PairedDevice?
     private var macAudioAttempts = 0
@@ -356,10 +357,7 @@ final class HeadphoneController: NSObject, ObservableObject {
         Log.debug("Controls taken by \(holder ?? "another device"), waiting")
         tearDown(status: .inUseElsewhere(holder))
         guard let output = AudioOutput.device(bluetoothAddress: device.addressString, name: device.name) else { return }
-        macAudioDevice = output.id
-        stopObservingMacAudio = AudioOutput.observeRunning(output.id) { [weak self] running in
-            self?.macAudioChanged(running: running)
-        }
+        watchMacPlayback(on: output.id)
     }
 
     /// Ask for NC/ASM state with each known inquiry type until one answers.
@@ -412,13 +410,27 @@ final class HeadphoneController: NSObject, ObservableObject {
         switch (p[0], p[1]) {
         case (Command2.retPeriParam, Command2.deviceListType), (Command2.ntfyPeriParam, Command2.deviceListType):
             guard let list = PairedDevice.parseList(p) else { return }
+            let macWasPlaying = devices.first(where: \.playing).map(isThisMac) == true
             devices = list
+            // Playback left the Mac (by hand or from the other device): whatever the Mac is playing
+            // right now shouldn't pull it straight back.
+            if macWasPlaying, let current = list.first(where: \.playing), !isThisMac(current) {
+                playbackMonitor?.ignoreCurrentPlayback()
+            }
             Log.debug("Devices: " + list.map { "\($0.name)\($0.playing ? " (playing)" : $0.connected ? "" : " (off)")" }
                 .joined(separator: ", "))
             confirmAutoSwitch()
         case (Command2.ntfyPeriExtParam, Command2.sourceSwitchType), (Command2.ntfyPeriParam, Command2.sourceSwitchType):
             // Switch result; 0 = success, 2 = refused during a call. Refresh the list either way.
-            if p.count >= 3, p[0] == Command2.ntfyPeriExtParam { Log.debug("Source switch result \(p[2])") }
+            if p.count >= 3, p[0] == Command2.ntfyPeriExtParam {
+                Log.debug("Source switch result \(p[2])")
+                if p[2] != 0, autoSwitchedFrom != nil {
+                    // Retrying every time the Mac makes a sound would just be refused again.
+                    autoSwitchedFrom = nil
+                    autoSwitchPausedUntil = Date().addingTimeInterval(120)
+                    Log.debug("Headphones refused the switch; pausing automatic switching for 2 minutes")
+                }
+            }
             link?.send(Command2.getDevices, table: .mdrNo2)
         default:
             break
@@ -561,48 +573,45 @@ final class HeadphoneController: NSObject, ObservableObject {
             return
         }
         guard output.id != macAudioDevice else { return }
-        detachMacAudio()
-        macAudioDevice = output.id
-        stopObservingMacAudio = AudioOutput.observeRunning(output.id) { [weak self] running in
-            self?.macAudioChanged(running: running)
-        }
-        // Reclaimed because the Mac was playing: no start event will come, so follow it now.
+        watchMacPlayback(on: output.id)
+        // Reclaimed because the Mac was playing: that playback already started, so follow it now,
+        // once the device list says who has playback.
         if followMacOnOpen {
             followMacOnOpen = false
-            if AudioOutput.isRunning(output.id) { macAudioChanged(running: true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.autoSwitchToMac(app: "the app that was playing")
+            }
         }
+    }
+
+    private func watchMacPlayback(on id: AudioDeviceID) {
+        detachMacAudio()
+        macAudioDevice = id
+        let monitor = MacPlaybackMonitor(device: id)
+        monitor.onFreshPlayback = { [weak self] app in self?.autoSwitchToMac(app: app) }
+        playbackMonitor = monitor
     }
 
     private func detachMacAudio() {
-        stopObservingMacAudio?()
-        stopObservingMacAudio = nil
+        playbackMonitor?.stop()
+        playbackMonitor = nil
         macAudioDevice = nil
-        autoSwitchWork?.cancel()
     }
 
-    /// Only a start of playback counts, and only if it lasts: a notification sound shouldn't
-    /// take the headset from the phone, and switching back by hand isn't undone while audio keeps going.
-    private func macAudioChanged(running: Bool) {
-        autoSwitchWork?.cancel()
-        guard running else { return }
-        let work = DispatchWorkItem { [weak self] in self?.autoSwitchToMac() }
-        autoSwitchWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
-    }
-
-    private func autoSwitchToMac() {
+    /// An app on this Mac really started playing (see MacPlaybackMonitor): bring the headset here.
+    private func autoSwitchToMac(app: String) {
         if case .inUseElsewhere = status {
             guard let id = macAudioDevice, AudioOutput.isRunning(id) else { return }
-            Log.debug("Mac started playing; taking the controls back")
+            Log.debug("\(app) started playing; taking the controls back")
             followMacOnOpen = true
             reconnect()
             return
         }
-        guard Self.autoSwitchEnabled, status == .connected,
+        guard Self.autoSwitchEnabled, status == .connected, Date() >= autoSwitchPausedUntil,
               let id = macAudioDevice, AudioOutput.isRunning(id),
               let current = devices.first(where: \.playing), !isThisMac(current),
               let mac = devices.first(where: isThisMac), mac.connected else { return }
-        Log.debug("Mac started playing; taking playback from \(current.name)")
+        Log.debug("\(app) started playing; taking playback from \(current.name)")
         autoSwitchedFrom = current
         switchAudio(to: mac)
     }

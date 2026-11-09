@@ -84,7 +84,18 @@ func runProbe() {
             controller.setVoiceFocus(voice == "on")
         }
     }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+    // --repeat <seconds>: resend --send payloads every second for that long (watch state change live)
+    let repeatFor = value("--repeat").flatMap(Int.init) ?? 0
+    for second in stride(from: 4, to: 3 + repeatFor, by: 1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(second)) {
+            for command in value("--send")?.split(separator: ";") ?? [] {
+                let table: MDR.DataType = command.hasPrefix("t2:") ? .mdrNo2 : .mdr
+                let bytes = command.split(separator: ":").last ?? ""
+                controller.sendRaw(bytes.split(separator: " ").compactMap { UInt8($0, radix: 16) }, table: table)
+            }
+        }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(6 + repeatFor)) {
         print("status:     \(controller.status)")
         print("device:     \(controller.deviceName ?? "-")")
         print("battery:    \(controller.battery.map { "\($0)%" } ?? "-")\(controller.isCharging ? " (charging)" : "")")
@@ -121,7 +132,9 @@ if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
 } else if CommandLine.arguments.contains("--list-audio") {
     let current = AudioOutput.defaultOutput
     for device in AudioOutput.outputDevices() {
-        print("\(device.id == current ? "*" : " ") \(device.name)  [\(device.uid)]")
+        let apps = AudioOutput.playingProcesses(on: device.id).values.sorted()
+        print("\(device.id == current ? "*" : " ") \(device.name)  [\(device.uid)]"
+              + (apps.isEmpty ? "" : "  playing: " + apps.joined(separator: ", ")))
     }
 } else if CommandLine.arguments.contains("--test-audio-switch") {
     // Moves output to another device briefly, then lets the headset matcher switch back.
