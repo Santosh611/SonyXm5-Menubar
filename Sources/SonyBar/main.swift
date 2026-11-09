@@ -136,6 +136,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--screenshots") {
         print("\(device.id == current ? "*" : " ") \(device.name)  [\(device.uid)]"
               + (apps.isEmpty ? "" : "  playing: " + apps.joined(separator: ", ")))
     }
+    let mic = AudioOutput.defaultInput
+    for device in AudioOutput.inputDevices() {
+        print("\(device.id == mic ? "*" : " ") mic: \(device.name)  [\(device.uid)]")
+    }
 } else if CommandLine.arguments.contains("--test-audio-switch") {
     // Moves output to another device briefly, then lets the headset matcher switch back.
     guard let headset = HeadphoneDiscovery.findHeadphones(),

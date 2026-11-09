@@ -3,6 +3,7 @@ import ServiceManagement
 
 struct MenuView: View {
     @ObservedObject var controller: HeadphoneController
+    @StateObject private var microphones = MicrophoneMonitor()
     @State private var showBands: Bool
     @State private var showAmbient: Bool
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -27,6 +28,8 @@ struct MenuView: View {
                 if controller.noiseMode == .ambient { ambientControls }
                 Divider()
                 equalizer
+                Divider()
+                microphone
                 if !controller.devices.isEmpty {
                     Divider()
                     devicesSection
@@ -200,6 +203,40 @@ struct MenuView: View {
                 Text("Adjust bands")
             }
             .font(.callout)
+        }
+    }
+
+    /// The Mac's default input. The headset's mic only exists while macOS has its hands-free connection.
+    private var microphone: some View {
+        let headset = microphones.headsetInput(named: controller.deviceName)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SectionTitle("Microphone")
+                    .fixedSize()
+                Spacer(minLength: 12)
+                // Not fixed-size like the EQ picker: device names can be long, so let them truncate.
+                Picker("", selection: Binding(
+                    get: { microphones.current },
+                    set: { microphones.select($0) })) {
+                    ForEach(microphones.inputs, id: \.id) { input in
+                        Text(input.id == headset?.id ? "Headphones" : input.name).tag(input.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 170)
+                .accessibilityLabel("Microphone")
+            }
+            if headset == nil {
+                Text("Headphone mic isn't available. Reconnect the headphones in Bluetooth settings to get it back.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if microphones.current == headset?.id {
+                Text("Audio switches to call quality while an app uses this mic.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

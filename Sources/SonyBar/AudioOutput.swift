@@ -1,7 +1,8 @@
 import CoreAudio
 import Foundation
 
-/// Minimal CoreAudio helpers for finding the headset's output device and making it the default.
+/// Minimal CoreAudio helpers for finding the headset's output device and making it the default,
+/// plus picking the Mac's default microphone.
 enum AudioOutput {
     struct Device {
         let id: AudioDeviceID
@@ -17,7 +18,12 @@ enum AudioOutput {
     }
 
     /// Output devices currently known to CoreAudio.
-    static func outputDevices() -> [Device] {
+    static func outputDevices() -> [Device] { devices(scope: kAudioDevicePropertyScopeOutput) }
+
+    /// Input devices (microphones) currently known to CoreAudio.
+    static func inputDevices() -> [Device] { devices(scope: kAudioDevicePropertyScopeInput) }
+
+    private static func devices(scope: AudioObjectPropertyScope) -> [Device] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -29,7 +35,7 @@ enum AudioOutput {
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
 
         return ids.compactMap { id in
-            guard hasOutputStreams(id),
+            guard hasStreams(id, scope: scope),
                   let name = string(id, kAudioObjectPropertyName),
                   let uid = string(id, kAudioDevicePropertyDeviceUID) else { return nil }
             return Device(id: id, name: name, uid: uid)
@@ -48,9 +54,22 @@ enum AudioOutput {
         return devices.first { $0.name == name }
     }
 
-    static var defaultOutput: AudioDeviceID {
+    static var defaultOutput: AudioDeviceID { defaultDevice(kAudioHardwarePropertyDefaultOutputDevice) }
+    static var defaultInput: AudioDeviceID { defaultDevice(kAudioHardwarePropertyDefaultInputDevice) }
+
+    @discardableResult
+    static func setDefaultOutput(_ id: AudioDeviceID) -> Bool {
+        setDefaultDevice(kAudioHardwarePropertyDefaultOutputDevice, id)
+    }
+
+    @discardableResult
+    static func setDefaultInput(_ id: AudioDeviceID) -> Bool {
+        setDefaultDevice(kAudioHardwarePropertyDefaultInputDevice, id)
+    }
+
+    private static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         var id = AudioDeviceID(0)
@@ -59,10 +78,9 @@ enum AudioOutput {
         return id
     }
 
-    @discardableResult
-    static func setDefaultOutput(_ id: AudioDeviceID) -> Bool {
+    private static func setDefaultDevice(_ selector: AudioObjectPropertySelector, _ id: AudioDeviceID) -> Bool {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain)
         var newID = id
@@ -140,10 +158,10 @@ enum AudioOutput {
 
     // MARK: - Helpers
 
-    private static func hasOutputStreams(_ id: AudioDeviceID) -> Bool {
+    private static func hasStreams(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Bool {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreams,
-            mScope: kAudioDevicePropertyScopeOutput,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
         return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
